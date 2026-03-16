@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/nwiley/vex/internal/lang"
@@ -78,5 +79,47 @@ func TestChangedFilesNonGitDir(t *testing.T) {
 	_, err := ChangedFiles(dir)
 	if err == nil {
 		t.Error("expected error for non-git directory")
+	}
+}
+
+func TestChangedFilesAbsolutePaths(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	// Create and commit a file
+	writeFile(t, filepath.Join(dir, "main.go"), "package main")
+	gitAdd(t, dir, ".")
+	gitCommit(t, dir, "initial")
+
+	// Modify the file so it shows up in diff
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n// changed")
+
+	files, err := ChangedFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected changed files, got none")
+	}
+	for _, f := range files {
+		if !filepath.IsAbs(f) {
+			t.Errorf("expected absolute path, got %q", f)
+		}
+	}
+}
+
+func TestChangedFilesNoChanges(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	// Create and commit a file, then don't modify anything
+	writeFile(t, filepath.Join(dir, "main.go"), "package main")
+	gitAdd(t, dir, ".")
+	gitCommit(t, dir, "initial")
+
+	files, err := ChangedFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if files != nil {
+		t.Errorf("expected nil for no changes, got %v", files)
 	}
 }

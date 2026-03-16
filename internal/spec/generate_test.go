@@ -1,8 +1,25 @@
 package spec
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/nwiley/vex/internal/provider"
 )
+
+type mockGenProvider struct {
+	response string
+	err      error
+}
+
+func (m *mockGenProvider) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	if m.err != nil {
+		return provider.CompletionResponse{}, m.err
+	}
+	return provider.CompletionResponse{Content: m.response}, nil
+}
 
 func TestParseGenerateResponse(t *testing.T) {
 	content := `- name: Auth
@@ -205,4 +222,127 @@ func containsString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestGenerateEndToEnd(t *testing.T) {
+	mock := &mockGenProvider{
+		response: `- name: Auth
+  path: internal/auth
+  description: |
+    Authentication module.
+  behaviors:
+    - name: login
+      description: |
+        POST /login returns JWT.
+`,
+	}
+
+	sections, err := Generate(context.Background(), mock, "Build an auth module with login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	if sections[0].Name != "Auth" {
+		t.Errorf("expected section name 'Auth', got %q", sections[0].Name)
+	}
+	if len(sections[0].Behaviors) != 1 {
+		t.Errorf("expected 1 behavior, got %d", len(sections[0].Behaviors))
+	}
+}
+
+func TestGenerateProviderError(t *testing.T) {
+	mock := &mockGenProvider{
+		err: fmt.Errorf("connection refused"),
+	}
+
+	_, err := Generate(context.Background(), mock, "Build an auth module")
+	if err == nil {
+		t.Error("expected error when provider returns error")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("expected error to contain 'connection refused', got %q", err.Error())
+	}
+}
+
+func TestGenerateExtendEndToEnd(t *testing.T) {
+	mock := &mockGenProvider{
+		response: `behaviors:
+  - name: logout
+    description: |
+      POST /logout invalidates the session.
+`,
+	}
+
+	section := &Section{
+		Name:        "Auth",
+		Description: "Authentication module",
+		Path:        PathList{"internal/auth"},
+		Behaviors: []Behavior{
+			{Name: "login", Description: "Login endpoint"},
+		},
+	}
+
+	result, err := GenerateExtend(context.Background(), mock, section, "Add logout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Behaviors) != 1 {
+		t.Fatalf("expected 1 behavior, got %d", len(result.Behaviors))
+	}
+	if result.Behaviors[0].Name != "logout" {
+		t.Errorf("expected behavior name 'logout', got %q", result.Behaviors[0].Name)
+	}
+}
+
+func TestGenerateExtendProviderError(t *testing.T) {
+	mock := &mockGenProvider{
+		err: fmt.Errorf("rate limited"),
+	}
+
+	section := &Section{
+		Name:        "Auth",
+		Description: "Authentication module",
+	}
+
+	_, err := GenerateExtend(context.Background(), mock, section, "Add logout")
+	if err == nil {
+		t.Error("expected error when provider returns error")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("expected error to contain 'rate limited', got %q", err.Error())
+	}
+}
+
+func TestParseGenerateResponseBehaviorMissingDescription(t *testing.T) {
+	content := `- name: Auth
+  path: internal/auth
+  description: Auth module
+  behaviors:
+    - name: login
+`
+	_, err := parseGenerateResponse(content)
+	if err == nil {
+		t.Error("expected error for behavior missing description")
+	}
+}
+
+func TestParseGenerateResponseSubsectionBehaviorMissingName(t *testing.T) {
+	content := `- name: Auth
+  path: internal/auth
+  description: Auth module
+  behaviors:
+    - name: login
+      description: Login endpoint
+  subsections:
+    - name: Token
+      path: internal/auth/token
+      behaviors:
+        - description: Refresh token without a name
+`
+	_, err := parseGenerateResponse(content)
+	if err == nil {
+		t.Error("expected error for subsection behavior missing name")
+	}
 }

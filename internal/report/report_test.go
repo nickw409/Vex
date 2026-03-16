@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,12 @@ func TestJSON(t *testing.T) {
 	data, err := r.JSON()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// Verify 2-space indentation
+	raw := string(data)
+	if !strings.Contains(raw, "  \"spec\"") {
+		t.Errorf("expected 2-space indentation, got:\n%s", raw)
 	}
 
 	var parsed Report
@@ -59,6 +66,9 @@ func TestComputeSummary(t *testing.T) {
 	}
 	r.ComputeSummary(3)
 
+	if r.BehaviorsChecked != 3 {
+		t.Errorf("expected BehaviorsChecked 3, got %d", r.BehaviorsChecked)
+	}
 	if r.Summary.TotalBehaviors != 3 {
 		t.Errorf("expected 3 total, got %d", r.Summary.TotalBehaviors)
 	}

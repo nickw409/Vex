@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,42 @@ func TestDrift_DifferentPaths(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected drift for lib")
+	}
+}
+
+func TestDrift_DeduplicatesOverlappingPaths(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	// Create a file under src/sub/
+	writeFile(t, filepath.Join(dir, "src", "sub", "main.go"), "package main")
+	gitAdd(t, dir, ".")
+	gitCommit(t, dir, "initial")
+
+	since := time.Now().Add(-1 * time.Second)
+
+	// Modify the file
+	writeFile(t, filepath.Join(dir, "src", "sub", "main.go"), "package main\n// changed")
+	gitAdd(t, dir, ".")
+	gitCommit(t, dir, "update")
+
+	// Pass overlapping paths: "src" and "src/sub" both cover the same file
+	result, err := Drift(dir, []string{"src", "src/sub"}, since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected drift result, got nil")
+	}
+
+	// The file should appear only once despite overlapping paths
+	count := 0
+	for _, f := range result.ChangedFiles {
+		if strings.Contains(f, "main.go") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected main.go to appear once (deduped), got %d times in %v", count, result.ChangedFiles)
 	}
 }
 

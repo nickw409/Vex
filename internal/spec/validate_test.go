@@ -1,9 +1,25 @@
 package spec
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/nwiley/vex/internal/provider"
 )
+
+type mockProvider struct {
+	response string
+	err      error
+}
+
+func (m *mockProvider) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	if m.err != nil {
+		return provider.CompletionResponse{}, m.err
+	}
+	return provider.CompletionResponse{Content: m.response}, nil
+}
 
 func TestBuildProjectValidatePrompt(t *testing.T) {
 	ps := &ProjectSpec{
@@ -114,5 +130,62 @@ func TestParseValidationResponseInvalid(t *testing.T) {
 	_, err := parseValidationResponse("not json at all")
 	if err == nil {
 		t.Error("expected error for invalid response")
+	}
+}
+
+func TestValidateProjectEndToEnd(t *testing.T) {
+	mock := &mockProvider{
+		response: `{"complete": true, "suggestions": []}`,
+	}
+
+	ps := &ProjectSpec{
+		Project: "MyApp",
+		Sections: []Section{
+			{
+				Name:        "Auth",
+				Description: "Auth module",
+				Behaviors: []Behavior{
+					{Name: "login", Description: "Login endpoint"},
+				},
+			},
+		},
+	}
+
+	result, err := ValidateProject(context.Background(), mock, ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Complete {
+		t.Error("expected complete=true")
+	}
+	if len(result.Suggestions) != 0 {
+		t.Errorf("expected 0 suggestions, got %d", len(result.Suggestions))
+	}
+}
+
+func TestValidateProjectProviderError(t *testing.T) {
+	mock := &mockProvider{
+		err: fmt.Errorf("provider unavailable"),
+	}
+
+	ps := &ProjectSpec{
+		Project: "MyApp",
+		Sections: []Section{
+			{
+				Name:        "Auth",
+				Description: "Auth module",
+				Behaviors: []Behavior{
+					{Name: "login", Description: "Login endpoint"},
+				},
+			},
+		},
+	}
+
+	_, err := ValidateProject(context.Background(), mock, ps)
+	if err == nil {
+		t.Error("expected error when provider returns error")
+	}
+	if !strings.Contains(err.Error(), "provider unavailable") {
+		t.Errorf("expected error to contain 'provider unavailable', got %q", err.Error())
 	}
 }

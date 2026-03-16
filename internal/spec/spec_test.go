@@ -279,3 +279,129 @@ func TestLoadProjectDefaultPath(t *testing.T) {
 		t.Error("expected error since .vex/vexspec.yaml doesn't exist in test dir")
 	}
 }
+
+func TestLoadProjectDuplicateSharedBehaviorNames(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+shared:
+  - name: error-handling
+    description: Structured errors
+  - name: error-handling
+    description: Duplicate shared behavior
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	ps, err := LoadProject(path)
+	// Currently the code doesn't reject duplicates, so it loads fine.
+	// But we verify the shared list has both entries.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps.Shared) != 2 {
+		t.Errorf("expected 2 shared behaviors, got %d", len(ps.Shared))
+	}
+}
+
+func TestLoadProjectSharedBehaviorMissingDescription(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+shared:
+  - name: error-handling
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for shared behavior missing description")
+	}
+}
+
+func TestLoadProjectSharedBehaviorMissingName(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+shared:
+  - description: Structured errors
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for shared behavior missing name")
+	}
+}
+
+func TestLoadProjectSubsectionMissingName(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+    subsections:
+      - path: some/dir
+        behaviors:
+          - name: thing
+            description: Thing
+`)
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for subsection missing name")
+	}
+}
+
+func TestLoadProjectSectionMissingName(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - description: Auth module
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for section missing name")
+	}
+}
+
+func TestSectionPathsDeduplication(t *testing.T) {
+	sec := &Section{
+		Path: PathList{"internal/auth", "internal/core"},
+		Subsections: []Subsection{
+			{
+				Name: "Sub1",
+				Path: PathList{"internal/auth"},
+			},
+			{
+				Name: "Sub2",
+				Path: PathList{"internal/core", "internal/api"},
+			},
+		},
+	}
+
+	paths := SectionPaths(sec)
+	// internal/auth, internal/core, internal/api — no duplicates
+	if len(paths) != 3 {
+		t.Errorf("expected 3 deduplicated paths, got %d: %v", len(paths), paths)
+	}
+	expected := []string{"internal/auth", "internal/core", "internal/api"}
+	for i, want := range expected {
+		if i >= len(paths) || paths[i] != want {
+			t.Errorf("expected paths[%d]=%q, got %v", i, want, paths)
+		}
+	}
+}

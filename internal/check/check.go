@@ -53,7 +53,8 @@ Rules:
 - Be specific about which test file and test function covers each behavior.
 - For gaps, suggest concrete test names and what they should assert.
 - Do NOT invent behaviors beyond what the spec describes. The spec is the scope boundary.
-- If a behavior has sub-points, each sub-point can be a separate covered/gap entry, but the behavior name stays the same.`
+- If a behavior has sub-points, each sub-point can be a separate covered/gap entry, but the behavior name stays the same.
+- If the source code contains significant observable behavior NOT described in the spec (e.g. concurrency, rate limiting, caching, retries, ordering guarantees), add a gap entry with behavior "UNSPECIFIED" and describe the missing spec coverage in the detail field. This helps keep the spec in sync with the code.`
 
 type checkResponse struct {
 	Gaps    []report.Gap     `json:"gaps"`

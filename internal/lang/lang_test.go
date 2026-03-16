@@ -234,6 +234,44 @@ func TestFindFilesSkipsGitDir(t *testing.T) {
 	}
 }
 
+func TestDetectJavaScriptWithPackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "app.js")
+	touch(t, dir, "app.test.js")
+	touch(t, dir, "package.json")
+
+	l, err := Detect(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Name != "javascript" {
+		t.Errorf("expected javascript, got %s", l.Name)
+	}
+}
+
+func TestDetectJavaScriptWithoutPackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "app.js")
+	touch(t, dir, "utils.js")
+
+	_, err := Detect(dir, nil)
+	if err == nil {
+		t.Error("expected error when .js files present but no package.json")
+	}
+}
+
+func TestDetectSkipsVendor(t *testing.T) {
+	dir := t.TempDir()
+	vendorDir := filepath.Join(dir, "vendor")
+	os.MkdirAll(vendorDir, 0755)
+	touch(t, vendorDir, "dep.go")
+
+	_, err := Detect(dir, nil)
+	if err == nil {
+		t.Error("expected error when files only in vendor")
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {

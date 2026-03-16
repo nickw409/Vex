@@ -27,6 +27,8 @@ sections:
         description: |
           Default config uses provider "claude-cli", model "opus",
           max_concurrency 4. No api_key_env or language overrides.
+          max_concurrency controls how many LLM calls run in parallel
+          during vex check when processing multiple sections.
       - name: config-load
         description: |
           Loads vex.yaml from explicit path. If path is empty, walks up
@@ -55,8 +57,8 @@ sections:
       - name: root-config-loading
         description: |
           Root command loads config via PersistentPreRunE. Skips config
-          loading for init and guide commands. Falls back to defaults
-          if config file not found (no error). Sets global cfg.
+          loading for init, guide, and drift commands. Falls back to
+          defaults if config file not found (no error). Sets global cfg.
       - name: root-config-flag
         description: |
           --config flag specifies explicit path to vex.yaml.
@@ -267,9 +269,17 @@ sections:
     behaviors:
       - name: check-run-project
         description: |
-          RunProject runs all sections in parallel with bounded
-          concurrency (default 4 if maxConcurrency <= 0). Merges
-          results into single report with computed summary.
+          RunProject runs LLM calls for each section in parallel,
+          bounded by max_concurrency from config (default 4). Merges
+          results into single report with computed summary. If
+          max_concurrency is <= 0, defaults to 4.
+      - name: check-unspecified-detection
+        description: |
+          When source code contains significant observable behavior
+          not described in the spec (e.g. concurrency, rate limiting,
+          caching), flags it as a gap with behavior name "UNSPECIFIED"
+          and describes the missing spec coverage. Keeps the spec
+          in sync with the code without requiring manual review.
       - name: check-section-prompt
         description: |
           Builds prompt from section name, description, behaviors,
@@ -309,10 +319,11 @@ sections:
         description: |
           Walks directory counting file extensions. Returns most
           common supported language from built-in set (Go, TypeScript,
-          JavaScript, Python, Java). Skips node_modules, vendor,
-          .git directories. If config overrides provided, returns
-          first override language. Returns error if no supported
-          language detected.
+          JavaScript, Python, Java). JavaScript files are only
+          counted if package.json exists in the directory. Skips
+          node_modules, vendor, .git directories. If config overrides
+          provided, returns first override language. Returns error
+          if no supported language detected.
       - name: lang-find-files
         description: |
           Walks directory tree separating files into source and
