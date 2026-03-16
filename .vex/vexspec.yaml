@@ -358,9 +358,11 @@ sections:
         behaviors:
           - name: drift-detection
             description: |
-              Compares git log since a timestamp against section paths.
-              Returns list of changed files per section, or nil if no
-              changes. Deduplicates file paths across multiple paths.
+              Compares git log since a timestamp against section paths
+              and also checks for uncommitted changes (staged and
+              unstaged) via git diff HEAD. Returns list of changed
+              files per section, or nil if no changes. Deduplicates
+              file paths across multiple paths.
           - name: report-mod-time
             description: |
               Returns the modification time of .vex/report.json as the

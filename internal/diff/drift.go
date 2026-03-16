@@ -23,6 +23,7 @@ func Drift(dir string, paths []string, since time.Time) (*DriftResult, error) {
 	for _, p := range paths {
 		absPath := filepath.Join(dir, p)
 
+		// Committed changes since last check
 		cmd := exec.Command("git", "log", "--since="+sinceStr, "--name-only", "--pretty=format:", "--", absPath)
 		cmd.Dir = dir
 
@@ -32,6 +33,24 @@ func Drift(dir string, paths []string, since time.Time) (*DriftResult, error) {
 		}
 
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				allChanged = append(allChanged, line)
+			}
+		}
+
+		// Uncommitted changes (staged + unstaged)
+		cmd = exec.Command("git", "diff", "HEAD", "--name-only", "--", absPath)
+		cmd.Dir = dir
+
+		out, err = cmd.Output()
+		if err != nil {
+			// HEAD may not exist in empty repos, ignore
+			continue
+		}
+
+		lines = strings.Split(strings.TrimSpace(string(out)), "\n")
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {

@@ -86,6 +86,35 @@ func TestDrift_DifferentPaths(t *testing.T) {
 	}
 }
 
+func TestDrift_UncommittedChanges(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	writeFile(t, filepath.Join(dir, "src", "main.go"), "package main")
+	gitAdd(t, dir, ".")
+	gitCommit(t, dir, "initial")
+
+	// Modify file but don't commit
+	writeFile(t, filepath.Join(dir, "src", "main.go"), "package main\n// uncommitted")
+
+	// Check drift since far in the future — no commits match, but uncommitted changes should
+	result, err := Drift(dir, []string{"src"}, time.Now().Add(1*time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected drift from uncommitted changes, got nil")
+	}
+	found := false
+	for _, f := range result.ChangedFiles {
+		if strings.Contains(f, "main.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected main.go in changed files, got %v", result.ChangedFiles)
+	}
+}
+
 func TestDrift_DeduplicatesOverlappingPaths(t *testing.T) {
 	dir := setupGitRepo(t)
 
