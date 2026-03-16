@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nwiley/vex/internal/provider"
+	"github.com/nwiley/vex/internal/report"
 	"github.com/nwiley/vex/internal/spec"
 )
 
@@ -321,4 +322,68 @@ func containsStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestFilterFalseUnspecified(t *testing.T) {
+	ps := &spec.ProjectSpec{
+		Sections: []spec.Section{
+			{
+				Name: "CLI",
+				Behaviors: []spec.Behavior{
+					{Name: "check-command", Description: "runs check"},
+				},
+				Subsections: []spec.Subsection{
+					{
+						Name: "Drift",
+						Behaviors: []spec.Behavior{
+							{Name: "drift-command", Description: "runs drift"},
+						},
+					},
+				},
+			},
+			{
+				Name: "Engine",
+				Behaviors: []spec.Behavior{
+					{Name: "run-project", Description: "runs project"},
+				},
+			},
+		},
+	}
+
+	gaps := []report.Gap{
+		{Behavior: "UNSPECIFIED", Detail: "The drift command is not covered here"},
+		{Behavior: "UNSPECIFIED", Detail: "Something totally new and unknown"},
+		{Behavior: "check-command", Detail: "Missing test for X"},
+	}
+
+	filtered := filterFalseUnspecified(gaps, ps)
+
+	// drift-command is known, so that UNSPECIFIED should be removed
+	// "totally new" has no match, so it stays
+	// non-UNSPECIFIED gaps always stay
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 gaps after filtering, got %d: %+v", len(filtered), filtered)
+	}
+	if filtered[0].Behavior != "UNSPECIFIED" || !strings.Contains(filtered[0].Detail, "totally new") {
+		t.Errorf("expected unknown UNSPECIFIED gap first, got %+v", filtered[0])
+	}
+	if filtered[1].Behavior != "check-command" {
+		t.Errorf("expected check-command gap second, got %+v", filtered[1])
+	}
+}
+
+func TestFilterFalseUnspecifiedEmptyGaps(t *testing.T) {
+	ps := &spec.ProjectSpec{
+		Sections: []spec.Section{
+			{Name: "CLI", Behaviors: []spec.Behavior{{Name: "x", Description: "y"}}},
+		},
+	}
+
+	filtered := filterFalseUnspecified([]report.Gap{}, ps)
+	if filtered == nil {
+		t.Fatal("expected non-nil empty slice")
+	}
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 gaps, got %d", len(filtered))
+	}
 }

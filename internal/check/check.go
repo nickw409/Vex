@@ -122,6 +122,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 		totalBehaviors += len(input.Behaviors)
 	}
 
+	merged.Gaps = filterFalseUnspecified(merged.Gaps, ps)
 	merged.ComputeSummary(totalBehaviors)
 
 	if len(errs) > 0 {
@@ -199,6 +200,58 @@ func parseSectionResponse(content string) ([]report.Gap, []report.Covered, error
 	}
 
 	return gaps, covered, nil
+}
+
+// filterFalseUnspecified removes UNSPECIFIED gaps that reference behaviors
+// or components already covered by other sections in the spec. This happens
+// because each section's LLM call only sees its own behaviors, so it flags
+// code that belongs to another section as unspecified.
+func filterFalseUnspecified(gaps []report.Gap, ps *spec.ProjectSpec) []report.Gap {
+	// Build a set of all known names: behavior names, section names,
+	// subsection names, and command names from across the full spec.
+	known := make(map[string]bool)
+	for _, sec := range ps.Sections {
+		known[strings.ToLower(sec.Name)] = true
+		for _, b := range sec.Behaviors {
+			known[strings.ToLower(b.Name)] = true
+		}
+		for _, sub := range sec.Subsections {
+			known[strings.ToLower(sub.Name)] = true
+			for _, b := range sub.Behaviors {
+				known[strings.ToLower(b.Name)] = true
+			}
+		}
+	}
+	for _, b := range ps.Shared {
+		known[strings.ToLower(b.Name)] = true
+	}
+
+	var filtered []report.Gap
+	for _, g := range gaps {
+		if g.Behavior != "UNSPECIFIED" {
+			filtered = append(filtered, g)
+			continue
+		}
+
+		// Check if the detail references any known behavior/section name
+		detailLower := strings.ToLower(g.Detail)
+		coveredElsewhere := false
+		for name := range known {
+			if len(name) > 2 && strings.Contains(detailLower, name) {
+				coveredElsewhere = true
+				break
+			}
+		}
+
+		if !coveredElsewhere {
+			filtered = append(filtered, g)
+		}
+	}
+
+	if filtered == nil {
+		filtered = []report.Gap{}
+	}
+	return filtered
 }
 
 func extractJSON(s string) string {

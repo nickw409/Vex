@@ -257,10 +257,9 @@ sections:
               instructions URL.
           - name: claude-cli-usage-logging
             description: |
-              Logs to stderr: input tokens, output tokens, cache
-              read/creation tokens, cost (USD), and duration.
-              Format: [vex] in={n} out={n} cache_read={n}
-              cache_create={n} cost=${n} duration={n}ms
+              Logs to stderr: input tokens, output tokens, cost
+              (USD), and duration. Format: [vex] tokens: {n} in
+              / {n} out | cost: ${n} | time: {n}s
 
   - name: Check Engine
     path: internal/check
