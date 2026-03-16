@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/nwiley/vex/internal/check"
-	"github.com/nwiley/vex/internal/diff"
 	"github.com/nwiley/vex/internal/lang"
 	"github.com/nwiley/vex/internal/provider"
 	"github.com/nwiley/vex/internal/report"
@@ -15,68 +14,14 @@ import (
 
 func newCheckCmd() *cobra.Command {
 	var specPath string
-	var useDiff bool
+	var section string
 
 	cmd := &cobra.Command{
-		Use:   "check [target]",
+		Use:   "check",
 		Short: "Check test coverage against a vexspec",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if specPath == "" {
-				return fmt.Errorf("--spec is required")
-			}
-
-			target := "."
-			if len(args) > 0 {
-				target = args[0]
-			} else if !useDiff {
-				return fmt.Errorf("target directory is required (or use --diff)")
-			}
-
-			s, err := spec.Load(specPath)
-			if err != nil {
-				return err
-			}
-
-			l, err := lang.Detect(target, cfg.Languages)
-			if err != nil && !useDiff {
-				return err
-			}
-
-			var sourceFiles, testFiles []string
-
-			if useDiff {
-				changed, err := diff.ChangedFiles(target)
-				if err != nil {
-					return err
-				}
-
-				if l == nil {
-					// No language detected and no files changed — empty report
-					return emptyReport(s, target, specPath)
-				}
-
-				sourceFiles, testFiles = diff.FilterByLanguage(changed, l)
-
-				if len(sourceFiles) == 0 && len(testFiles) == 0 {
-					return emptyReport(s, target, specPath)
-				}
-			} else {
-				sourceFiles, testFiles, err = lang.FindFiles(target, l)
-				if err != nil {
-					return err
-				}
-
-				if len(testFiles) == 0 {
-					return fmt.Errorf("no test files found in %s", target)
-				}
-			}
-
-			srcMap, err := readFiles(sourceFiles)
-			if err != nil {
-				return err
-			}
-			testMap, err := readFiles(testFiles)
+			ps, err := spec.LoadProject(specPath)
 			if err != nil {
 				return err
 			}
@@ -86,49 +31,110 @@ func newCheckCmd() *cobra.Command {
 				return err
 			}
 
-			input := &check.Input{
-				Spec:        s,
-				SourceFiles: srcMap,
-				TestFiles:   testMap,
-				Target:      target,
-				SpecPath:    specPath,
+			sections := ps.Sections
+			if section != "" {
+				found := false
+				for _, sec := range ps.Sections {
+					if sec.Name == section {
+						sections = []spec.Section{sec}
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("section %q not found in spec", section)
+				}
 			}
 
-			r, err := check.Run(cmd.Context(), p, input)
+			var inputs []check.SectionInput
+			for i := range sections {
+				sec := &sections[i]
+				behaviors := ps.AllBehaviors(sec)
+				if len(behaviors) == 0 {
+					continue
+				}
+
+				paths := spec.SectionPaths(sec)
+				if len(paths) == 0 {
+					continue
+				}
+
+				srcMap := make(map[string]string)
+				testMap := make(map[string]string)
+
+				for _, dir := range paths {
+					l, err := lang.Detect(dir, cfg.Languages)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
+						continue
+					}
+
+					sourceFiles, testFiles, err := lang.FindFiles(dir, l)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
+						continue
+					}
+
+					for _, f := range sourceFiles {
+						data, err := os.ReadFile(f)
+						if err != nil {
+							return fmt.Errorf("reading %s: %w", f, err)
+						}
+						srcMap[f] = string(data)
+					}
+					for _, f := range testFiles {
+						data, err := os.ReadFile(f)
+						if err != nil {
+							return fmt.Errorf("reading %s: %w", f, err)
+						}
+						testMap[f] = string(data)
+					}
+				}
+
+				if len(testMap) == 0 && len(srcMap) == 0 {
+					fmt.Fprintf(os.Stderr, "warning: no files found for section %q\n", sec.Name)
+					continue
+				}
+
+				inputs = append(inputs, check.SectionInput{
+					Section:     sec,
+					Behaviors:   behaviors,
+					SourceFiles: srcMap,
+					TestFiles:   testMap,
+				})
+			}
+
+			if len(inputs) == 0 {
+				return emptyReport(ps)
+			}
+
+			r, err := check.RunProject(cmd.Context(), p, ps, inputs, cfg.MaxConcurrency)
 			if err != nil {
-				return err
+				fmt.Fprintln(os.Stderr, err)
 			}
 
 			return outputReport(r)
 		},
 	}
 
-	cmd.Flags().StringVar(&specPath, "spec", "", "path to vexspec.yaml (required)")
-	cmd.Flags().BoolVar(&useDiff, "diff", false, "scope check to git diff only")
+	cmd.Flags().StringVar(&specPath, "spec", "", "path to vexspec.yaml (default: .vex/vexspec.yaml)")
+	cmd.Flags().StringVar(&section, "section", "", "check only this section")
 
 	return cmd
 }
 
-func readFiles(paths []string) (map[string]string, error) {
-	m := make(map[string]string, len(paths))
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", p, err)
-		}
-		m[p] = string(data)
+func emptyReport(ps *spec.ProjectSpec) error {
+	totalBehaviors := 0
+	for _, sec := range ps.Sections {
+		totalBehaviors += len(ps.AllBehaviors(&sec))
 	}
-	return m, nil
-}
 
-func emptyReport(s *spec.Spec, target, specPath string) error {
 	r := &report.Report{
-		Target:  target,
-		Spec:    specPath,
+		Spec:    ".vex/vexspec.yaml",
 		Gaps:    []report.Gap{},
 		Covered: []report.Covered{},
 	}
-	r.ComputeSummary(len(s.Behaviors))
+	r.ComputeSummary(totalBehaviors)
 	return outputReport(r)
 }
 

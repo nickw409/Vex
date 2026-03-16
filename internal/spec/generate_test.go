@@ -1,0 +1,208 @@
+package spec
+
+import (
+	"testing"
+)
+
+func TestParseGenerateResponse(t *testing.T) {
+	content := `- name: Auth
+  path: internal/auth
+  description: |
+    JWT authentication module.
+  behaviors:
+    - name: login
+      description: |
+        POST /login accepts credentials and returns JWT.
+    - name: logout
+      description: |
+        POST /logout invalidates the session.
+`
+
+	sections, err := parseGenerateResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	if sections[0].Name != "Auth" {
+		t.Errorf("expected name 'Auth', got %q", sections[0].Name)
+	}
+	if len(sections[0].Behaviors) != 2 {
+		t.Errorf("expected 2 behaviors, got %d", len(sections[0].Behaviors))
+	}
+}
+
+func TestParseGenerateResponseWithFences(t *testing.T) {
+	content := "```yaml\n- name: Core\n  path: src/core\n  description: |\n    Core module.\n  behaviors:\n    - name: process\n      description: |\n        Processes data.\n```"
+
+	sections, err := parseGenerateResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sections[0].Name != "Core" {
+		t.Errorf("expected name 'Core', got %q", sections[0].Name)
+	}
+}
+
+func TestParseGenerateResponseInvalid(t *testing.T) {
+	_, err := parseGenerateResponse("not yaml at all {{{")
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestParseGenerateResponseMissingName(t *testing.T) {
+	content := `- path: src/core
+  description: Core
+  behaviors:
+    - name: process
+      description: Does things
+`
+	_, err := parseGenerateResponse(content)
+	if err == nil {
+		t.Error("expected error for missing section name")
+	}
+}
+
+func TestParseGenerateResponseMultipleSections(t *testing.T) {
+	content := `- name: Auth
+  path: internal/auth
+  description: Auth module
+  behaviors:
+    - name: login
+      description: Login endpoint
+- name: API
+  path: internal/api
+  description: API layer
+  behaviors:
+    - name: routing
+      description: Request routing
+`
+
+	sections, err := parseGenerateResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sections) != 2 {
+		t.Errorf("expected 2 sections, got %d", len(sections))
+	}
+}
+
+func TestParseGenerateResponseWithSubsections(t *testing.T) {
+	content := `- name: App Server
+  path: app
+  description: Main server
+  behaviors:
+    - name: websocket
+      description: WebSocket handling
+  subsections:
+    - name: Auth Handlers
+      file: app/handlers/auth.go
+      behaviors:
+        - name: login-handler
+          description: Login request handler
+`
+
+	sections, err := parseGenerateResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sections[0].Subsections) != 1 {
+		t.Errorf("expected 1 subsection, got %d", len(sections[0].Subsections))
+	}
+	if sections[0].Subsections[0].Name != "Auth Handlers" {
+		t.Errorf("expected subsection 'Auth Handlers', got %q", sections[0].Subsections[0].Name)
+	}
+}
+
+func TestParseExtendResponse(t *testing.T) {
+	content := `behaviors:
+  - name: token-revocation
+    description: |
+      POST /revoke invalidates a token.
+subsections:
+  - name: Admin Auth
+    path: internal/auth/admin/
+    behaviors:
+      - name: admin-login
+        description: |
+          Admin login with elevated privileges.
+`
+
+	result, err := parseExtendResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Behaviors) != 1 {
+		t.Errorf("expected 1 behavior, got %d", len(result.Behaviors))
+	}
+	if result.Behaviors[0].Name != "token-revocation" {
+		t.Errorf("expected 'token-revocation', got %q", result.Behaviors[0].Name)
+	}
+	if len(result.Subsections) != 1 {
+		t.Errorf("expected 1 subsection, got %d", len(result.Subsections))
+	}
+}
+
+func TestParseExtendResponseBehaviorsOnly(t *testing.T) {
+	content := `behaviors:
+  - name: logout
+    description: Invalidates session
+`
+
+	result, err := parseExtendResponse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Behaviors) != 1 {
+		t.Errorf("expected 1 behavior, got %d", len(result.Behaviors))
+	}
+	if len(result.Subsections) != 0 {
+		t.Errorf("expected 0 subsections, got %d", len(result.Subsections))
+	}
+}
+
+func TestParseExtendResponseInvalid(t *testing.T) {
+	_, err := parseExtendResponse("not yaml {{{")
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestBuildExtendPrompt(t *testing.T) {
+	section := &Section{
+		Name:        "Auth",
+		Description: "Authentication module",
+		Path:        PathList{"internal/auth"},
+		Behaviors: []Behavior{
+			{Name: "login", Description: "Login endpoint"},
+		},
+		Subsections: []Subsection{
+			{
+				Name: "Token",
+				Behaviors: []Behavior{
+					{Name: "refresh", Description: "Token refresh"},
+				},
+			},
+		},
+	}
+
+	prompt := buildExtendPrompt(section, "Add logout and token revocation")
+
+	for _, want := range []string{"Auth", "login", "Token", "refresh", "Add logout"} {
+		if !containsString(prompt, want) {
+			t.Errorf("prompt should contain %q", want)
+		}
+	}
+}
+
+func containsString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

@@ -6,63 +6,40 @@ import (
 	"testing"
 )
 
-func TestCheckRequiresSpecFlag(t *testing.T) {
+func TestCheckSpecNotFound(t *testing.T) {
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"check", "."})
-
-	if err := cmd.Execute(); err == nil {
-		t.Error("expected error when --spec is missing")
-	}
-}
-
-func TestCheckRequiresTarget(t *testing.T) {
-	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"check", "--spec", "some.yaml"})
-
-	if err := cmd.Execute(); err == nil {
-		t.Error("expected error when target is missing and --diff not set")
-	}
-}
-
-func TestCheckSpecFileNotFound(t *testing.T) {
-	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"check", ".", "--spec", "/nonexistent/spec.yaml"})
+	cmd.SetArgs([]string{"check", "--spec", "/nonexistent/spec.yaml"})
 
 	if err := cmd.Execute(); err == nil {
 		t.Error("expected error for nonexistent spec file")
 	}
 }
 
-func TestCheckNoTestFilesFound(t *testing.T) {
+func TestCheckSectionNotFound(t *testing.T) {
 	dir := t.TempDir()
-	specPath := filepath.Join(dir, "test.vexspec.yaml")
-	os.WriteFile(specPath, []byte(`feature: Test
-behaviors:
-  - name: foo
-    description: does something
+	vexDir := filepath.Join(dir, ".vex")
+	os.MkdirAll(vexDir, 0755)
+
+	specPath := filepath.Join(vexDir, "vexspec.yaml")
+	os.WriteFile(specPath, []byte(`project: Test
+sections:
+  - name: Auth
+    path: auth
+    description: Auth module
+    behaviors:
+      - name: login
+        description: Login endpoint
 `), 0644)
 
-	// Create a source file but no test files
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
-
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"check", dir, "--spec", specPath})
+	cmd.SetArgs([]string{"check", "--spec", specPath, "--section", "Nonexistent"})
 
 	if err := cmd.Execute(); err == nil {
-		t.Error("expected error when no test files found")
+		t.Error("expected error for nonexistent section")
 	}
 }
 
-func TestCheckValidateRequiresArg(t *testing.T) {
-	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"validate"})
-
-	if err := cmd.Execute(); err == nil {
-		t.Error("expected error when no spec file arg provided")
-	}
-}
-
-func TestCheckValidateSpecNotFound(t *testing.T) {
+func TestValidateRequiresValidSpec(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{"validate", "/nonexistent/spec.yaml"})
 

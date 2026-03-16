@@ -1,32 +1,51 @@
 package spec
 
 import (
+	"strings"
 	"testing"
 )
 
-func TestBuildValidatePrompt(t *testing.T) {
-	s := &Spec{
-		Feature:     "JWT Auth",
-		Description: "Token-based authentication",
-		Behaviors: []Behavior{
-			{Name: "login", Description: "POST /login returns JWT"},
-			{Name: "refresh", Description: "POST /refresh returns new token"},
+func TestBuildProjectValidatePrompt(t *testing.T) {
+	ps := &ProjectSpec{
+		Project:     "MyApp",
+		Description: "Test application",
+		Shared: []Behavior{
+			{Name: "error-handling", Description: "Structured errors"},
+		},
+		Sections: []Section{
+			{
+				Name:        "Auth",
+				Description: "Authentication module",
+				Shared:      []string{"error-handling"},
+				Behaviors: []Behavior{
+					{Name: "login", Description: "POST /login returns JWT"},
+				},
+				Subsections: []Subsection{
+					{
+						Name: "Token Refresh",
+						Behaviors: []Behavior{
+							{Name: "refresh", Description: "POST /refresh returns new token"},
+						},
+					},
+				},
+			},
 		},
 	}
 
-	prompt := buildValidatePrompt(s)
+	prompt := buildProjectValidatePrompt(ps)
 
-	if !contains(prompt, "JWT Auth") {
-		t.Error("prompt should contain feature name")
-	}
-	if !contains(prompt, "Token-based authentication") {
-		t.Error("prompt should contain description")
-	}
-	if !contains(prompt, "login") {
-		t.Error("prompt should contain behavior name")
-	}
-	if !contains(prompt, "POST /refresh") {
-		t.Error("prompt should contain behavior description")
+	for _, want := range []string{
+		"MyApp",
+		"Test application",
+		"error-handling",
+		"Auth",
+		"login",
+		"Token Refresh",
+		"refresh",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt should contain %q", want)
+		}
 	}
 }
 
@@ -44,8 +63,8 @@ func TestParseValidationResponse(t *testing.T) {
 			count:    0,
 		},
 		{
-			name:  "incomplete",
-			input: `{"complete": false, "suggestions": [{"behavior_name": "token-expiry", "description": "Add error case for expired tokens", "relation": "extends login"}]}`,
+			name:     "incomplete",
+			input:    `{"complete": false, "suggestions": [{"section": "Auth", "behavior_name": "revocation", "description": "Token revocation", "relation": "new"}]}`,
 			complete: false,
 			count:    1,
 		},
@@ -74,12 +93,15 @@ func TestParseValidationResponse(t *testing.T) {
 }
 
 func TestParseValidationResponseFields(t *testing.T) {
-	input := `{"complete": false, "suggestions": [{"behavior_name": "revocation", "description": "Token revocation flow", "relation": "new"}]}`
+	input := `{"complete": false, "suggestions": [{"section": "Auth", "behavior_name": "revocation", "description": "Token revocation flow", "relation": "new"}]}`
 	result, err := parseValidationResponse(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := result.Suggestions[0]
+	if s.Section != "Auth" {
+		t.Errorf("expected section 'Auth', got %q", s.Section)
+	}
 	if s.BehaviorName != "revocation" {
 		t.Errorf("expected behavior_name 'revocation', got %q", s.BehaviorName)
 	}
@@ -93,17 +115,4 @@ func TestParseValidationResponseInvalid(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid response")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

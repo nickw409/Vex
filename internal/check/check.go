@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/nwiley/vex/internal/provider"
 	"github.com/nwiley/vex/internal/report"
@@ -13,18 +14,17 @@ import (
 
 const maxContentSize = 400_000
 
-type Input struct {
-	Spec        *spec.Spec
+type SectionInput struct {
+	Section     *spec.Section
+	Behaviors   []spec.Behavior
 	SourceFiles map[string]string
 	TestFiles   map[string]string
-	Target      string
-	SpecPath    string
 }
 
 const checkSystemPrompt = `You are a test coverage auditor. You will receive:
-1. A feature specification with named behaviors describing intended functionality
-2. Source code files implementing the feature
-3. Test files testing the feature
+1. A component specification with named behaviors describing intended functionality
+2. Source code files implementing the component
+3. Test files testing the component
 
 Your job: determine whether the tests adequately cover each behavior described in the specification.
 
@@ -60,35 +60,105 @@ type checkResponse struct {
 	Covered []report.Covered `json:"covered"`
 }
 
-func Run(ctx context.Context, p provider.Provider, input *Input) (*report.Report, error) {
-	userPrompt, err := buildCheckPrompt(input)
+// RunProject checks all sections in parallel with bounded concurrency.
+func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int) (*report.Report, error) {
+	if maxConcurrency <= 0 {
+		maxConcurrency = 4
+	}
+
+	type sectionResult struct {
+		section string
+		gaps    []report.Gap
+		covered []report.Covered
+		err     error
+	}
+
+	results := make([]sectionResult, len(inputs))
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for i, input := range inputs {
+		wg.Add(1)
+		go func(idx int, si SectionInput) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			sr := sectionResult{section: si.Section.Name}
+
+			gaps, covered, err := runSection(ctx, p, &si)
+			if err != nil {
+				sr.err = fmt.Errorf("section %q: %w", si.Section.Name, err)
+			} else {
+				sr.gaps = gaps
+				sr.covered = covered
+			}
+			results[idx] = sr
+		}(i, input)
+	}
+
+	wg.Wait()
+
+	merged := &report.Report{
+		Spec:    ".vex/vexspec.yaml",
+		Gaps:    []report.Gap{},
+		Covered: []report.Covered{},
+	}
+
+	totalBehaviors := 0
+	var errs []string
+
+	for _, sr := range results {
+		if sr.err != nil {
+			errs = append(errs, sr.err.Error())
+			continue
+		}
+		merged.Gaps = append(merged.Gaps, sr.gaps...)
+		merged.Covered = append(merged.Covered, sr.covered...)
+	}
+
+	for _, input := range inputs {
+		totalBehaviors += len(input.Behaviors)
+	}
+
+	merged.ComputeSummary(totalBehaviors)
+
+	if len(errs) > 0 {
+		return merged, fmt.Errorf("errors in %d section(s): %s", len(errs), strings.Join(errs, "; "))
+	}
+
+	return merged, nil
+}
+
+func runSection(ctx context.Context, p provider.Provider, input *SectionInput) ([]report.Gap, []report.Covered, error) {
+	userPrompt, err := buildSectionPrompt(input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	req := provider.CompletionRequest{
 		SystemPrompt: checkSystemPrompt,
 		UserPrompt:   userPrompt,
-		MaxTokens:    8192,
 	}
 
 	resp, err := p.Complete(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("check request failed: %w", err)
+		return nil, nil, fmt.Errorf("check request failed: %w", err)
 	}
 
-	return parseCheckResponse(resp.Content, input)
+	return parseSectionResponse(resp.Content)
 }
 
-func buildCheckPrompt(input *Input) (string, error) {
+func buildSectionPrompt(input *SectionInput) (string, error) {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "## Specification\n\nFeature: %s\n", input.Spec.Feature)
-	if input.Spec.Description != "" {
-		fmt.Fprintf(&b, "%s\n", input.Spec.Description)
+	fmt.Fprintf(&b, "## Section: %s\n\n", input.Section.Name)
+	if input.Section.Description != "" {
+		fmt.Fprintf(&b, "%s\n", input.Section.Description)
 	}
-	b.WriteString("\n### Behaviors\n\n")
-	for _, beh := range input.Spec.Behaviors {
+
+	b.WriteString("### Behaviors\n\n")
+	for _, beh := range input.Behaviors {
 		fmt.Fprintf(&b, "#### %s\n%s\n\n", beh.Name, beh.Description)
 	}
 
@@ -110,7 +180,7 @@ func buildCheckPrompt(input *Input) (string, error) {
 	return result, nil
 }
 
-func parseCheckResponse(content string, input *Input) (*report.Report, error) {
+func parseSectionResponse(content string) ([]report.Gap, []report.Covered, error) {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
@@ -119,24 +189,17 @@ func parseCheckResponse(content string, input *Input) (*report.Report, error) {
 
 	var resp checkResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		return nil, fmt.Errorf("parsing check response: %w\nraw response: %s", err, content)
+		return nil, nil, fmt.Errorf("parsing check response: %w\nraw response: %s", err, content)
 	}
 
-	r := &report.Report{
-		Target:  input.Target,
-		Spec:    input.SpecPath,
-		Gaps:    resp.Gaps,
-		Covered: resp.Covered,
+	gaps := resp.Gaps
+	covered := resp.Covered
+	if gaps == nil {
+		gaps = []report.Gap{}
+	}
+	if covered == nil {
+		covered = []report.Covered{}
 	}
 
-	if r.Gaps == nil {
-		r.Gaps = []report.Gap{}
-	}
-	if r.Covered == nil {
-		r.Covered = []report.Covered{}
-	}
-
-	r.ComputeSummary(len(input.Spec.Behaviors))
-
-	return r, nil
+	return gaps, covered, nil
 }

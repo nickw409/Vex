@@ -7,8 +7,7 @@ import (
 
 func TestJSON(t *testing.T) {
 	r := &Report{
-		Target: "./auth/",
-		Spec:   "auth.vexspec.yaml",
+		Spec: ".vex/vexspec.yaml",
 		Gaps: []Gap{
 			{Behavior: "login", Detail: "No expiry test", Suggestion: "Add expiry assertion"},
 		},
@@ -28,8 +27,8 @@ func TestJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if parsed.Target != "./auth/" {
-		t.Errorf("expected target ./auth/, got %s", parsed.Target)
+	if parsed.Spec != ".vex/vexspec.yaml" {
+		t.Errorf("expected spec .vex/vexspec.yaml, got %s", parsed.Spec)
 	}
 	if len(parsed.Gaps) != 1 {
 		t.Errorf("expected 1 gap, got %d", len(parsed.Gaps))

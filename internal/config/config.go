@@ -9,10 +9,11 @@ import (
 )
 
 type Config struct {
-	Provider  string                    `yaml:"provider"`
-	Model     string                    `yaml:"model"`
-	APIKeyEnv string                    `yaml:"api_key_env,omitempty"`
-	Languages map[string]LanguageConfig `yaml:"languages,omitempty"`
+	Provider       string                    `yaml:"provider"`
+	Model          string                    `yaml:"model"`
+	MaxConcurrency int                       `yaml:"max_concurrency,omitempty"`
+	APIKeyEnv      string                    `yaml:"api_key_env,omitempty"`
+	Languages      map[string]LanguageConfig `yaml:"languages,omitempty"`
 }
 
 type LanguageConfig struct {
@@ -22,8 +23,9 @@ type LanguageConfig struct {
 
 func Default() *Config {
 	return &Config{
-		Provider: "claude-cli",
-		Model:    "opus",
+		Provider:       "claude-cli",
+		Model:          "opus",
+		MaxConcurrency: 4,
 	}
 }
 
@@ -51,6 +53,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "opus"
+	}
+	if cfg.MaxConcurrency <= 0 {
+		cfg.MaxConcurrency = 4
 	}
 
 	return &cfg, nil

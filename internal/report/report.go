@@ -3,7 +3,6 @@ package report
 import "encoding/json"
 
 type Report struct {
-	Target           string    `json:"target"`
 	Spec             string    `json:"spec"`
 	BehaviorsChecked int       `json:"behaviors_checked"`
 	Gaps             []Gap     `json:"gaps"`

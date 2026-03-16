@@ -6,14 +6,14 @@ import (
 	"github.com/nwiley/vex/internal/spec"
 )
 
-func TestBuildCheckPrompt(t *testing.T) {
-	input := &Input{
-		Spec: &spec.Spec{
-			Feature:     "Auth",
-			Description: "JWT authentication",
-			Behaviors: []spec.Behavior{
-				{Name: "login", Description: "POST /login returns JWT"},
-			},
+func TestBuildSectionPrompt(t *testing.T) {
+	input := &SectionInput{
+		Section: &spec.Section{
+			Name:        "Auth",
+			Description: "Authentication module",
+		},
+		Behaviors: []spec.Behavior{
+			{Name: "login", Description: "POST /login returns JWT"},
 		},
 		SourceFiles: map[string]string{
 			"auth.go": "package auth\nfunc Login() {}",
@@ -21,11 +21,9 @@ func TestBuildCheckPrompt(t *testing.T) {
 		TestFiles: map[string]string{
 			"auth_test.go": "package auth\nfunc TestLogin(t *testing.T) {}",
 		},
-		Target:   "./auth/",
-		SpecPath: "auth.vexspec.yaml",
 	}
 
-	prompt, err := buildCheckPrompt(input)
+	prompt, err := buildSectionPrompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,30 +35,28 @@ func TestBuildCheckPrompt(t *testing.T) {
 	}
 }
 
-func TestBuildCheckPromptTooLarge(t *testing.T) {
+func TestBuildSectionPromptTooLarge(t *testing.T) {
 	large := make([]byte, maxContentSize)
 	for i := range large {
 		large[i] = 'x'
 	}
 
-	input := &Input{
-		Spec: &spec.Spec{
-			Feature:   "Test",
-			Behaviors: []spec.Behavior{{Name: "b", Description: "d"}},
+	input := &SectionInput{
+		Section: &spec.Section{Name: "Big"},
+		Behaviors: []spec.Behavior{
+			{Name: "b", Description: "d"},
 		},
 		SourceFiles: map[string]string{"big.go": string(large)},
 		TestFiles:   map[string]string{},
-		Target:      ".",
-		SpecPath:    "test.vexspec.yaml",
 	}
 
-	_, err := buildCheckPrompt(input)
+	_, err := buildSectionPrompt(input)
 	if err == nil {
 		t.Error("expected error for oversized content")
 	}
 }
 
-func TestParseCheckResponse(t *testing.T) {
+func TestParseSectionResponse(t *testing.T) {
 	content := `{
   "gaps": [
     {"behavior": "login", "detail": "No expiry test", "suggestion": "Add TestLoginExpiry"}
@@ -70,101 +66,61 @@ func TestParseCheckResponse(t *testing.T) {
   ]
 }`
 
-	input := &Input{
-		Spec: &spec.Spec{
-			Feature: "Auth",
-			Behaviors: []spec.Behavior{
-				{Name: "login", Description: "login behavior"},
-				{Name: "refresh", Description: "refresh behavior"},
-			},
-		},
-		Target:   "./auth/",
-		SpecPath: "auth.vexspec.yaml",
-	}
-
-	r, err := parseCheckResponse(content, input)
+	gaps, covered, err := parseSectionResponse(content)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(r.Gaps) != 1 {
-		t.Errorf("expected 1 gap, got %d", len(r.Gaps))
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(gaps))
 	}
-	if len(r.Covered) != 1 {
-		t.Errorf("expected 1 covered, got %d", len(r.Covered))
-	}
-	if r.Summary.TotalBehaviors != 2 {
-		t.Errorf("expected 2 total behaviors, got %d", r.Summary.TotalBehaviors)
-	}
-	if r.Target != "./auth/" {
-		t.Errorf("expected target ./auth/, got %s", r.Target)
+	if len(covered) != 1 {
+		t.Errorf("expected 1 covered, got %d", len(covered))
 	}
 }
 
-func TestParseCheckResponseInvalid(t *testing.T) {
-	input := &Input{
-		Spec:     &spec.Spec{Feature: "X", Behaviors: []spec.Behavior{{Name: "a", Description: "b"}}},
-		Target:   ".",
-		SpecPath: "x.yaml",
-	}
-	_, err := parseCheckResponse("not json", input)
+func TestParseSectionResponseInvalid(t *testing.T) {
+	_, _, err := parseSectionResponse("not json")
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
 }
 
-func TestParseCheckResponseEmpty(t *testing.T) {
-	input := &Input{
-		Spec:     &spec.Spec{Feature: "X", Behaviors: []spec.Behavior{{Name: "a", Description: "b"}}},
-		Target:   ".",
-		SpecPath: "x.yaml",
-	}
-
-	r, err := parseCheckResponse(`{"gaps": [], "covered": []}`, input)
+func TestParseSectionResponseEmpty(t *testing.T) {
+	gaps, covered, err := parseSectionResponse(`{"gaps": [], "covered": []}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.HasGaps() {
-		t.Error("should have no gaps")
+	if len(gaps) != 0 {
+		t.Error("expected no gaps")
+	}
+	if len(covered) != 0 {
+		t.Error("expected no covered")
 	}
 }
 
-func TestParseCheckResponseMarkdownFenced(t *testing.T) {
+func TestParseSectionResponseNullArrays(t *testing.T) {
+	gaps, covered, err := parseSectionResponse(`{"gaps": null, "covered": null}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gaps == nil {
+		t.Error("gaps should not be nil")
+	}
+	if covered == nil {
+		t.Error("covered should not be nil")
+	}
+}
+
+func TestParseSectionResponseMarkdownFenced(t *testing.T) {
 	content := "```json\n{\"gaps\": [], \"covered\": [{\"behavior\": \"login\", \"detail\": \"tested\", \"test_file\": \"a.go\", \"test_name\": \"TestA\"}]}\n```"
 
-	input := &Input{
-		Spec:     &spec.Spec{Feature: "X", Behaviors: []spec.Behavior{{Name: "login", Description: "b"}}},
-		Target:   ".",
-		SpecPath: "x.yaml",
-	}
-
-	r, err := parseCheckResponse(content, input)
+	_, covered, err := parseSectionResponse(content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Covered) != 1 {
-		t.Errorf("expected 1 covered, got %d", len(r.Covered))
-	}
-}
-
-func TestParseCheckResponseNullArrays(t *testing.T) {
-	content := `{"gaps": null, "covered": null}`
-
-	input := &Input{
-		Spec:     &spec.Spec{Feature: "X", Behaviors: []spec.Behavior{{Name: "a", Description: "b"}}},
-		Target:   ".",
-		SpecPath: "x.yaml",
-	}
-
-	r, err := parseCheckResponse(content, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Gaps == nil {
-		t.Error("gaps should not be nil (should be empty slice)")
-	}
-	if r.Covered == nil {
-		t.Error("covered should not be nil (should be empty slice)")
+	if len(covered) != 1 {
+		t.Errorf("expected 1 covered, got %d", len(covered))
 	}
 }
 

@@ -9,98 +9,273 @@ import (
 func writeSpec(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "test.vexspec.yaml")
+	path := filepath.Join(dir, "vexspec.yaml")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-func TestLoad(t *testing.T) {
-	path := writeSpec(t, `feature: JWT Auth
-description: Token-based authentication
-behaviors:
-  - name: login
-    description: POST /login returns JWT on valid credentials
-  - name: token-validation
-    description: Protected endpoints require valid JWT
+func TestLoadProject(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+description: Test project
+sections:
+  - name: Auth
+    path: internal/auth
+    description: Authentication module
+    behaviors:
+      - name: login
+        description: POST /login returns JWT
+      - name: logout
+        description: POST /logout invalidates session
 `)
 
-	s, err := Load(path)
+	ps, err := LoadProject(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if s.Feature != "JWT Auth" {
-		t.Errorf("expected feature 'JWT Auth', got %q", s.Feature)
+	if ps.Project != "MyApp" {
+		t.Errorf("expected project 'MyApp', got %q", ps.Project)
 	}
-	if len(s.Behaviors) != 2 {
-		t.Errorf("expected 2 behaviors, got %d", len(s.Behaviors))
+	if len(ps.Sections) != 1 {
+		t.Errorf("expected 1 section, got %d", len(ps.Sections))
 	}
-	if s.Behaviors[0].Name != "login" {
-		t.Errorf("expected first behavior 'login', got %q", s.Behaviors[0].Name)
+	if ps.Sections[0].Name != "Auth" {
+		t.Errorf("expected section name 'Auth', got %q", ps.Sections[0].Name)
+	}
+	if len(ps.Sections[0].Behaviors) != 2 {
+		t.Errorf("expected 2 behaviors, got %d", len(ps.Sections[0].Behaviors))
 	}
 }
 
-func TestLoadMissingFeature(t *testing.T) {
-	path := writeSpec(t, `behaviors:
-  - name: login
-    description: does something
+func TestLoadProjectWithShared(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+shared:
+  - name: error-handling
+    description: All errors return structured JSON
+sections:
+  - name: Auth
+    path: internal/auth
+    description: Auth module
+    shared: [error-handling]
+    behaviors:
+      - name: login
+        description: Login endpoint
 `)
 
-	_, err := Load(path)
+	ps, err := LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := ps.AllBehaviors(&ps.Sections[0])
+	if len(all) != 2 {
+		t.Errorf("expected 2 behaviors (1 shared + 1 own), got %d", len(all))
+	}
+	if all[0].Name != "error-handling" {
+		t.Errorf("expected shared behavior first, got %q", all[0].Name)
+	}
+}
+
+func TestLoadProjectWithSubsections(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: App Server
+    path: app
+    description: Main server
+    behaviors:
+      - name: websocket
+        description: WebSocket handling
+    subsections:
+      - name: Auth Handlers
+        file: app/handlers/auth.go
+        behaviors:
+          - name: login
+            description: Login handler
+      - name: Analysis
+        path: [app/handlers/analysis/, app/db/queries/]
+        behaviors:
+          - name: result-queries
+            description: Query results
+`)
+
+	ps, err := LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sec := &ps.Sections[0]
+	all := ps.AllBehaviors(sec)
+	if len(all) != 3 {
+		t.Errorf("expected 3 behaviors (1 section + 2 subsection), got %d", len(all))
+	}
+
+	paths := SectionPaths(sec)
+	// app (section), app/handlers (from file auth.go), app/handlers/analysis/, app/db/queries/
+	if len(paths) != 4 {
+		t.Errorf("expected 4 paths, got %d: %v", len(paths), paths)
+	}
+}
+
+func TestLoadProjectPathAsString(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Core
+    path: internal/core
+    description: Core module
+    behaviors:
+      - name: process
+        description: Process data
+`)
+
+	ps, err := LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(ps.Sections[0].Path) != 1 || ps.Sections[0].Path[0] != "internal/core" {
+		t.Errorf("expected path ['internal/core'], got %v", ps.Sections[0].Path)
+	}
+}
+
+func TestLoadProjectPathAsList(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    path: [src/handlers/auth.go, src/auth/]
+    description: Auth module
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	ps, err := LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(ps.Sections[0].Path) != 2 {
+		t.Errorf("expected 2 paths, got %d", len(ps.Sections[0].Path))
+	}
+}
+
+func TestLoadProjectMissingProject(t *testing.T) {
+	path := writeSpec(t, `sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+`)
+
+	_, err := LoadProject(path)
 	if err == nil {
-		t.Error("expected error for missing feature")
+		t.Error("expected error for missing project name")
 	}
 }
 
-func TestLoadEmptyBehaviors(t *testing.T) {
-	path := writeSpec(t, `feature: Test
-behaviors: []
+func TestLoadProjectNoSections(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections: []
 `)
 
-	_, err := Load(path)
+	_, err := LoadProject(path)
 	if err == nil {
-		t.Error("expected error for empty behaviors")
+		t.Error("expected error for empty sections")
 	}
 }
 
-func TestLoadBehaviorMissingName(t *testing.T) {
-	path := writeSpec(t, `feature: Test
-behaviors:
-  - description: does something
+func TestLoadProjectUnknownSharedRef(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    description: Auth
+    shared: [nonexistent]
+    behaviors:
+      - name: login
+        description: Login
 `)
 
-	_, err := Load(path)
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for unknown shared reference")
+	}
+}
+
+func TestLoadProjectSubsectionPathAndFile(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
+        description: Login
+    subsections:
+      - name: Bad
+        path: some/dir
+        file: some/file.go
+        behaviors:
+          - name: thing
+            description: Thing
+`)
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error when subsection has both path and file")
+	}
+}
+
+func TestLoadProjectBehaviorMissingName(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - description: Login
+`)
+
+	_, err := LoadProject(path)
 	if err == nil {
 		t.Error("expected error for behavior missing name")
 	}
 }
 
-func TestLoadBehaviorMissingDescription(t *testing.T) {
-	path := writeSpec(t, `feature: Test
-behaviors:
-  - name: login
+func TestLoadProjectBehaviorMissingDescription(t *testing.T) {
+	path := writeSpec(t, `project: MyApp
+sections:
+  - name: Auth
+    description: Auth
+    behaviors:
+      - name: login
 `)
 
-	_, err := Load(path)
+	_, err := LoadProject(path)
 	if err == nil {
 		t.Error("expected error for behavior missing description")
 	}
 }
 
-func TestLoadNonexistentFile(t *testing.T) {
-	_, err := Load("/nonexistent/spec.yaml")
+func TestLoadProjectInvalidYAML(t *testing.T) {
+	path := writeSpec(t, ":::invalid yaml\n\t{{{")
+
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestLoadProjectNonexistentFile(t *testing.T) {
+	_, err := LoadProject("/nonexistent/spec.yaml")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
 }
 
-func TestLoadInvalidYAML(t *testing.T) {
-	path := writeSpec(t, ":::invalid yaml\n\t{{{")
-
-	_, err := Load(path)
+func TestLoadProjectDefaultPath(t *testing.T) {
+	// LoadProject("") should look for .vex/vexspec.yaml
+	_, err := LoadProject("")
 	if err == nil {
-		t.Error("expected error for invalid YAML")
+		t.Error("expected error since .vex/vexspec.yaml doesn't exist in test dir")
 	}
 }

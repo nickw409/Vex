@@ -11,12 +11,18 @@ import (
 )
 
 func newValidateCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "validate <spec-file>",
+	var specPath string
+
+	cmd := &cobra.Command{
+		Use:   "validate [spec-file]",
 		Short: "Check if a vexspec is complete",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := spec.Load(args[0])
+			if len(args) > 0 {
+				specPath = args[0]
+			}
+
+			ps, err := spec.LoadProject(specPath)
 			if err != nil {
 				return err
 			}
@@ -26,7 +32,7 @@ func newValidateCmd() *cobra.Command {
 				return err
 			}
 
-			result, err := spec.Validate(cmd.Context(), p, s)
+			result, err := spec.ValidateProject(cmd.Context(), p, ps)
 			if err != nil {
 				return err
 			}
@@ -48,4 +54,6 @@ func newValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	return cmd
 }
