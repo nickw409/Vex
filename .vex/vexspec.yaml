@@ -272,6 +272,16 @@ sections:
           bounded by max_concurrency from config (default 4). Merges
           results into single report with computed summary. If
           max_concurrency is <= 0, defaults to 4.
+      - name: check-two-pass
+        description: |
+          Uses a two-pass strategy to minimize cost. First pass sends
+          only test files and behavior descriptions — LLM maps tests
+          to behaviors and identifies which behaviors have no obvious
+          test coverage. Second pass sends source and test files only
+          for behaviors flagged as uncovered in the first pass. If all
+          behaviors are covered in the first pass, the second pass is
+          skipped entirely. Well-tested codebases converge to first-
+          pass-only cost over successive runs.
       - name: check-unspecified-detection
         description: |
           When source code contains significant observable behavior
@@ -279,12 +289,20 @@ sections:
           caching), flags it as a gap with behavior name "UNSPECIFIED"
           and describes the missing spec coverage. Keeps the spec
           in sync with the code without requiring manual review.
+          Only runs during the second pass since it requires source
+          code to detect.
+      - name: check-false-positive-filter
+        description: |
+          Post-processes UNSPECIFIED gaps by checking if the detail
+          references any known behavior, section, or subsection name
+          from the full spec. Removes false positives caused by per-
+          section LLM calls not seeing the full spec.
       - name: check-section-prompt
         description: |
           Builds prompt from section name, description, behaviors,
-          source files, and test files. Enforces 400K char limit
-          on total content. Returns error if exceeded, suggesting
-          --diff or narrower path.
+          and files. Enforces 400K char limit on total content.
+          Returns error if exceeded, suggesting --diff or narrower
+          path.
       - name: check-response-parsing
         description: |
           Parses LLM JSON response, extracting JSON even when the

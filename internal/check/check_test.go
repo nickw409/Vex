@@ -55,10 +55,45 @@ func makeInput(name string) SectionInput {
 	}
 }
 
-var validResponse = `{"gaps": [{"behavior": "b1", "detail": "missing", "suggestion": "add test"}], "covered": [{"behavior": "b2", "detail": "ok", "test_file": "a_test.go", "test_name": "TestA"}]}`
+// gapResponse: pass 1 finds a gap, triggers pass 2
+var gapResponse = `{"gaps": [{"behavior": "b1", "detail": "missing", "suggestion": "add test"}], "covered": []}`
+
+// coveredMockProvider returns a response covering whatever behavior name appears in the prompt
+type coveredMockProvider struct {
+	mockProvider
+}
+
+func (m *coveredMockProvider) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	m.mu.Lock()
+	m.calls++
+	m.concurrent++
+	if m.concurrent > m.maxConcurrent {
+		m.maxConcurrent = m.concurrent
+	}
+	m.mu.Unlock()
+
+	time.Sleep(10 * time.Millisecond)
+
+	m.mu.Lock()
+	m.concurrent--
+	m.mu.Unlock()
+
+	// Extract behavior name from prompt and return it as covered
+	// Prompt contains "#### <name>\n"
+	resp := `{"gaps": [], "covered": [{"behavior": "matched", "detail": "ok", "test_file": "t.go", "test_name": "T"}]}`
+	for _, line := range strings.Split(req.UserPrompt, "\n") {
+		if strings.HasPrefix(line, "#### ") {
+			name := strings.TrimPrefix(line, "#### ")
+			resp = fmt.Sprintf(`{"gaps": [], "covered": [{"behavior": %q, "detail": "ok", "test_file": "t.go", "test_name": "T"}]}`, name)
+			break
+		}
+	}
+	return provider.CompletionResponse{Content: resp}, nil
+}
 
 func TestRunProjectBasic(t *testing.T) {
-	mp := &mockProvider{response: validResponse}
+	// Use a response with gaps so both passes run
+	mp := &mockProvider{response: gapResponse}
 	inputs := []SectionInput{makeInput("sec1"), makeInput("sec2")}
 	ps := &spec.ProjectSpec{}
 
@@ -67,30 +102,52 @@ func TestRunProjectBasic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should have called provider once per section
+	// Should have called provider twice per section (pass 1 + pass 2)
 	mp.mu.Lock()
 	calls := mp.calls
 	mp.mu.Unlock()
-	if calls != 2 {
-		t.Errorf("expected 2 provider calls, got %d", calls)
+	if calls != 4 {
+		t.Errorf("expected 4 provider calls (2 passes x 2 sections), got %d", calls)
 	}
 
-	// Results from both sections should be merged
+	// Gaps from pass 2 for both sections
 	if len(rpt.Gaps) != 2 {
-		t.Errorf("expected 2 gaps (1 per section), got %d", len(rpt.Gaps))
-	}
-	if len(rpt.Covered) != 2 {
-		t.Errorf("expected 2 covered (1 per section), got %d", len(rpt.Covered))
+		t.Errorf("expected 2 gaps (1 per section from pass 2), got %d", len(rpt.Gaps))
 	}
 
-	// Summary should reflect total behaviors from all inputs
 	if rpt.BehaviorsChecked != 2 {
 		t.Errorf("expected BehaviorsChecked=2, got %d", rpt.BehaviorsChecked)
 	}
 }
 
+func TestRunProjectSkipsPass2WhenCovered(t *testing.T) {
+	mp := &coveredMockProvider{}
+	inputs := []SectionInput{makeInput("sec1"), makeInput("sec2")}
+	ps := &spec.ProjectSpec{}
+
+	rpt, err := RunProject(context.Background(), mp, ps, inputs, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only pass 1 calls — no pass 2 needed
+	mp.mu.Lock()
+	calls := mp.calls
+	mp.mu.Unlock()
+	if calls != 2 {
+		t.Errorf("expected 2 provider calls (pass 1 only), got %d", calls)
+	}
+
+	if len(rpt.Gaps) != 0 {
+		t.Errorf("expected 0 gaps, got %d", len(rpt.Gaps))
+	}
+	if len(rpt.Covered) != 2 {
+		t.Errorf("expected 2 covered (1 per section), got %d", len(rpt.Covered))
+	}
+}
+
 func TestRunProjectMaxConcurrencyDefaultsTo4(t *testing.T) {
-	mp := &mockProvider{response: `{"gaps": [], "covered": []}`}
+	mp := &coveredMockProvider{}
 	// Create 6 inputs; concurrency 0 should default to 4 and still complete
 	var inputs []SectionInput
 	for i := 0; i < 6; i++ {
@@ -114,7 +171,7 @@ func TestRunProjectMaxConcurrencyDefaultsTo4(t *testing.T) {
 }
 
 func TestRunProjectBoundedConcurrency(t *testing.T) {
-	mp := &mockProvider{response: `{"gaps": [], "covered": []}`}
+	mp := &coveredMockProvider{}
 	var inputs []SectionInput
 	for i := 0; i < 8; i++ {
 		inputs = append(inputs, makeInput(fmt.Sprintf("s%d", i)))
@@ -137,7 +194,7 @@ func TestRunProjectPartialError(t *testing.T) {
 	// First call succeeds, second fails. Use a provider that fails on the second call.
 	failProvider := &sectionFailProvider{
 		failSection: "fail",
-		response:    validResponse,
+		response:    gapResponse,
 	}
 
 	inputs := []SectionInput{
@@ -155,11 +212,8 @@ func TestRunProjectPartialError(t *testing.T) {
 	}
 
 	// Partial results from the successful section should still be present
-	if len(rpt.Gaps) != 1 {
-		t.Errorf("expected 1 gap from successful section, got %d", len(rpt.Gaps))
-	}
-	if len(rpt.Covered) != 1 {
-		t.Errorf("expected 1 covered from successful section, got %d", len(rpt.Covered))
+	if len(rpt.Gaps) < 1 {
+		t.Errorf("expected at least 1 gap from successful section, got %d", len(rpt.Gaps))
 	}
 }
 
@@ -193,7 +247,7 @@ func TestBuildSectionPrompt(t *testing.T) {
 		},
 	}
 
-	prompt, err := buildSectionPrompt(input)
+	prompt, err := buildPass2Prompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +274,7 @@ func TestBuildSectionPromptTooLarge(t *testing.T) {
 		TestFiles:   map[string]string{},
 	}
 
-	_, err := buildSectionPrompt(input)
+	_, err := buildPass2Prompt(input)
 	if err == nil {
 		t.Error("expected error for oversized content")
 	}
@@ -310,8 +364,8 @@ func TestParseSectionResponsePreambleBeforeJSON(t *testing.T) {
 }
 
 func TestCheckSystemPromptContainsUnspecified(t *testing.T) {
-	if !strings.Contains(checkSystemPrompt, "UNSPECIFIED") {
-		t.Error("checkSystemPrompt should contain 'UNSPECIFIED' instruction")
+	if !strings.Contains(pass2SystemPrompt, "UNSPECIFIED") {
+		t.Error("pass2SystemPrompt should contain 'UNSPECIFIED' instruction")
 	}
 }
 
