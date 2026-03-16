@@ -18,7 +18,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			name := cmd.Name()
-			if name == "init" || name == "guide" {
+			if name == "init" || name == "guide" || name == "drift" {
 				return nil
 			}
 
@@ -38,6 +38,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newCheckCmd())
 	cmd.AddCommand(newGuideCmd())
 	cmd.AddCommand(newSpecCmd())
+	cmd.AddCommand(newDriftCmd())
 
 	return cmd
 }

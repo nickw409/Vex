@@ -111,6 +111,11 @@ sections:
             description: |
               Accepts optional positional arg for spec file path.
               Defaults to .vex/vexspec.yaml if no arg provided.
+          - name: validate-execution
+            description: |
+              Sends the loaded spec to the LLM to check for missing
+              behaviors. Returns suggestions for gaps and flags
+              non-behavioral entries for removal.
           - name: validate-output
             description: |
               Writes JSON validation result to stdout and
@@ -278,11 +283,6 @@ sections:
           empty slices (not nil) for gaps and covered if LLM
           returns none. Each gap has behavior, detail, suggestion.
           Each covered has behavior, detail, test_file, test_name.
-      - name: check-partial-coverage
-        description: |
-          A behavior can have both gaps and covered entries
-          (partial coverage). FullyCovered in summary counts
-          behaviors that appear in covered but not in gaps.
 
   - name: Report
     path: internal/report
@@ -318,6 +318,35 @@ sections:
           Walks directory tree separating files into source and
           test lists by language patterns. Skips node_modules,
           vendor, .git directories.
+
+  - name: Drift
+    path: [internal/diff, internal/cli]
+    description: |
+      Detects code changes since the last vex check to identify
+      sections that may need re-checking.
+    subsections:
+      - name: Drift Detection
+        file: internal/diff/drift.go
+        behaviors:
+          - name: drift-detection
+            description: |
+              Compares git log since a timestamp against section paths.
+              Returns list of changed files per section, or nil if no
+              changes. Deduplicates file paths across multiple paths.
+          - name: report-mod-time
+            description: |
+              Returns the modification time of .vex/report.json as the
+              last check timestamp. Returns zero time if file missing.
+
+      - name: Drift Command
+        file: internal/cli/drift.go
+        behaviors:
+          - name: drift-command
+            description: |
+              vex drift loads spec, checks each section for git changes
+              since last check. Outputs JSON with drifted sections and
+              changed files, plus clean sections. Exit 1 if any sections
+              drifted, exit 0 if all clean, exit 2 if no previous check.
 
   - name: Diff
     path: internal/diff

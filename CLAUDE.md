@@ -36,9 +36,13 @@ internal/
 ## Commands
 
 ```bash
-vex check ./path/ --spec feature.vexspec.yaml   # check test coverage against spec
-vex check --diff --spec feature.vexspec.yaml     # check only changed files
-vex validate feature.vexspec.yaml                # validate spec completeness
+vex check                                        # check test coverage against spec
+vex check --section Config                       # check single section
+vex check --diff                                 # check only changed files
+vex validate                                     # validate spec completeness
+vex spec "description"                           # generate spec sections from task
+vex spec "description" --extend Config           # add behaviors to existing section
+vex drift                                        # check for code changes since last check
 vex init                                         # create vex.yaml
 vex guide                                        # print agent instructions for writing specs
 ```
