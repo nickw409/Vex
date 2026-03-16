@@ -50,7 +50,14 @@ Rules:
 - A behavior is "conspicuously absent" if a reasonable user of the component would ask "wait, what happens when I do X?" and the spec has no answer.
 - If a behavior covers error cases inline (e.g. "returns error when X"), that counts. Don't re-suggest it as a separate behavior.
 - Prefer fewer, high-confidence suggestions over exhaustive lists.
-- Use "relation": "new" for entirely missing behaviors, or "relation": "extends <name>" when an existing behavior is missing a significant aspect.`
+- Use "relation": "new" for entirely missing behaviors, or "relation": "extends <name>" when an existing behavior is missing a significant aspect.
+
+Additionally, flag any existing behavior that is NOT actually a behavior:
+- Data structure or type definitions (e.g. "Report contains these fields") are NOT behaviors
+- Interface contracts (e.g. "Provider must implement Complete()") are NOT behaviors
+- Lists of supported values (e.g. "Supports Go, Python, Java") are NOT behaviors
+- A real behavior has observable input → output or describes something a caller does and gets a result
+When you find non-behavioral entries, include them in suggestions with relation: "remove: not a behavior — <reason>".`
 
 func ValidateProject(ctx context.Context, p provider.Provider, ps *ProjectSpec) (*ValidationResult, error) {
 	req := provider.CompletionRequest{

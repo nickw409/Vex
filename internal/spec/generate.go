@@ -44,12 +44,24 @@ Rules:
 - Include error cases and edge cases inline within behaviors (e.g. "Returns 401 on invalid credentials")
 - Be specific: "returns 401" not "handles errors"
 - Include side effects: database writes, events emitted, files created
-- Do NOT describe implementation details (which function, which pattern)
+- Do NOT describe implementation details (which function, which pattern, which algorithm)
 - Do NOT suggest timeout handling, permission errors, or internal error propagation
 - Behaviors come from the task description, NOT from any existing code
 - Use short-kebab-case for behavior names
 - If the task spans multiple directories, use a list for path
-- Only use subsections when there is a clear structural reason to scope behaviors`
+- Only use subsections when there is a clear structural reason to scope behaviors
+
+A behavior is NOT:
+- A data structure or type definition (e.g. "Report contains these fields")
+- An interface contract (e.g. "Provider must implement Complete()")
+- A list of supported values (e.g. "Supports Go, Python, Java")
+- A description of how something is implemented internally
+
+A behavior IS:
+- Something a user or caller does and gets a result (e.g. "Returns error when file not found")
+- Something with observable input → output (e.g. "Marshals report to indented JSON")
+
+Descriptions must be stable — describe WHAT happens, not HOW. Do not reference specific implementation mechanisms (e.g. "strips markdown fences") that may change. Describe the observable contract (e.g. "extracts JSON from LLM response even when wrapped in preamble text").`
 
 const generateExtendSystemPrompt = `You are a spec writer for a test coverage auditor called Vex. You will receive:
 1. An existing section from a vexspec
@@ -83,7 +95,14 @@ Rules:
 - Do NOT describe implementation details
 - Do NOT suggest timeout handling, permission errors, or internal error propagation
 - Behaviors come from the task description, NOT from any existing code
-- Use short-kebab-case for behavior names`
+- Use short-kebab-case for behavior names
+
+A behavior is NOT:
+- A data structure or type definition (e.g. "Report contains these fields")
+- An interface contract (e.g. "Provider must implement Complete()")
+- A list of supported values (e.g. "Supports Go, Python, Java")
+
+Descriptions must be stable — describe WHAT happens, not HOW.`
 
 type ExtendResult struct {
 	Behaviors   []Behavior   `yaml:"behaviors,omitempty"`

@@ -203,13 +203,8 @@ sections:
               Returns ValidationResult with complete bool and
               suggestions array. Each suggestion has section name,
               behavior_name, description, and relation (new or
-              extends existing).
-          - name: validate-prompt-rules
-            description: |
-              LLM prompt only suggests conspicuously absent behaviors
-              within each section's scope. Does not suggest timeout,
-              permission, logging, internal error, or graceful
-              degradation behaviors. High-confidence suggestions only.
+              extends existing). Only suggests conspicuously absent
+              behaviors within each section's scope.
 
       - name: Generation
         file: internal/spec/generate.go
@@ -226,13 +221,6 @@ sections:
               Takes task description and existing section, calls LLM
               to generate only new behaviors/subsections that don't
               duplicate existing ones. Returns ExtendResult.
-          - name: generate-prompt-rules
-            description: |
-              LLM prompt requires behaviors describe one observable
-              behavior each, include error cases inline, use
-              kebab-case names, absolute paths from project root,
-              and no implementation details or internal error
-              handling suggestions.
 
   - name: Provider
     path: internal/provider
@@ -246,11 +234,6 @@ sections:
             description: |
               New() creates provider from config. Currently only
               supports "claude-cli". Returns error on unknown provider.
-          - name: provider-interface
-            description: |
-              Provider interface requires Complete(ctx, request)
-              returning CompletionResponse with content string
-              and TokenUsage (input/output tokens, cost, duration).
 
       - name: Claude CLI
         file: internal/provider/claude_cli.go
@@ -290,11 +273,11 @@ sections:
           --diff or narrower path.
       - name: check-response-parsing
         description: |
-          Parses LLM JSON response. Strips markdown fences before
-          parsing. Returns empty slices (not nil) for gaps and
-          covered if LLM returns none. Each gap has behavior,
-          detail, suggestion. Each covered has behavior, detail,
-          test_file, test_name.
+          Parses LLM JSON response, extracting JSON even when the
+          LLM includes preamble text or markdown fences. Returns
+          empty slices (not nil) for gaps and covered if LLM
+          returns none. Each gap has behavior, detail, suggestion.
+          Each covered has behavior, detail, test_file, test_name.
       - name: check-partial-coverage
         description: |
           A behavior can have both gaps and covered entries
@@ -306,11 +289,6 @@ sections:
     description: |
       Test coverage report formatting.
     behaviors:
-      - name: report-structure
-        description: |
-          Report contains spec path, behaviors_checked count,
-          gaps array, covered array, and summary with
-          total_behaviors, fully_covered, gaps_found.
       - name: report-json
         description: |
           JSON() marshals report to indented JSON (2-space indent).
@@ -330,16 +308,11 @@ sections:
       - name: lang-detect
         description: |
           Walks directory counting file extensions. Returns most
-          common supported language. Skips node_modules, vendor,
+          common supported language from built-in set (Go, TypeScript,
+          JavaScript, Python, Java). Skips node_modules, vendor,
           .git directories. If config overrides provided, returns
           first override language. Returns error if no supported
           language detected.
-      - name: lang-builtin-patterns
-        description: |
-          Built-in languages: Go (*_test.go / *.go), TypeScript
-          (*.test.ts, *.spec.ts / *.ts), JavaScript (*.test.js,
-          *.spec.js / *.js, only if package.json exists), Python
-          (test_*.py, *_test.py / *.py), Java (*Test.java / *.java).
       - name: lang-find-files
         description: |
           Walks directory tree separating files into source and
