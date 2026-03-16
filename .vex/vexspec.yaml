@@ -101,6 +101,15 @@ sections:
               diff.FilterByLanguage to scope file gathering to only
               git-changed files instead of walking full section paths.
               Produces empty report with exit 0 if no files changed.
+          - name: check-drift-mode
+            description: |
+              When --drift flag is passed, uses drift detection to
+              skip sections with no changes since the last check.
+              Only drifted sections are sent to the LLM. If no
+              previous check exists, checks all sections with a
+              warning. If all sections are clean, outputs empty
+              report. Sections where drift check fails are included
+              as a safety fallback.
           - name: check-output
             description: |
               Writes JSON report to stdout and .vex/report.json.

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/nwiley/vex/internal/check"
+	"github.com/nwiley/vex/internal/diff"
 	"github.com/nwiley/vex/internal/lang"
 	"github.com/nwiley/vex/internal/provider"
 	"github.com/nwiley/vex/internal/report"
@@ -15,6 +16,7 @@ import (
 func newCheckCmd() *cobra.Command {
 	var specPath string
 	var section string
+	var useDrift bool
 
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -43,6 +45,38 @@ func newCheckCmd() *cobra.Command {
 				}
 				if !found {
 					return fmt.Errorf("section %q not found in spec", section)
+				}
+			}
+
+			if useDrift {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("getting working directory: %w", err)
+				}
+				since := diff.ReportModTime(cwd)
+				if since.IsZero() {
+					fmt.Fprintln(os.Stderr, "no previous check found, checking all sections")
+				} else {
+					var drifted []spec.Section
+					for _, sec := range sections {
+						paths := spec.SectionPaths(&sec)
+						result, err := diff.Drift(cwd, paths, since)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "warning: drift check failed for %s: %v\n", sec.Name, err)
+							drifted = append(drifted, sec)
+							continue
+						}
+						if result != nil {
+							drifted = append(drifted, sec)
+						} else {
+							fmt.Fprintf(os.Stderr, "skipping clean section %q\n", sec.Name)
+						}
+					}
+					sections = drifted
+					if len(sections) == 0 {
+						fmt.Fprintln(os.Stderr, "all sections clean, nothing to check")
+						return emptyReport(ps)
+					}
 				}
 			}
 
@@ -119,6 +153,7 @@ func newCheckCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&specPath, "spec", "", "path to vexspec.yaml (default: .vex/vexspec.yaml)")
 	cmd.Flags().StringVar(&section, "section", "", "check only this section")
+	cmd.Flags().BoolVar(&useDrift, "drift", false, "only check sections with changes since last check")
 
 	return cmd
 }
