@@ -38,7 +38,6 @@ internal/
 ```bash
 vex check                                        # check test coverage against spec
 vex check --section Config                       # check single section
-vex check --diff                                 # check only changed files
 vex check --drift                                # check only sections changed since last check
 vex validate                                     # validate spec completeness
 vex spec "description"                           # generate spec sections from task

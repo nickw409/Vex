@@ -95,12 +95,6 @@ sections:
               Calls check.RunProject with gathered files and provider.
               On check error, prints to stderr but still outputs
               whatever report was generated.
-          - name: check-diff-mode
-            description: |
-              When --diff flag is passed, uses diff.ChangedFiles and
-              diff.FilterByLanguage to scope file gathering to only
-              git-changed files instead of walking full section paths.
-              Produces empty report with exit 0 if no files changed.
           - name: check-drift-mode
             description: |
               When --drift flag is passed, uses drift detection to
