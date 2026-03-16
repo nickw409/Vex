@@ -17,6 +17,7 @@ func newCheckCmd() *cobra.Command {
 	var specPath string
 	var section string
 	var useDrift bool
+	var useDiff bool
 
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -103,10 +104,24 @@ func newCheckCmd() *cobra.Command {
 						continue
 					}
 
-					sourceFiles, testFiles, err := lang.FindFiles(dir, l)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
-						continue
+					var sourceFiles, testFiles []string
+
+					if useDiff {
+						changed, err := diff.ChangedFiles(dir)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "warning: git diff failed for %s: %v\n", dir, err)
+							continue
+						}
+						if len(changed) == 0 {
+							continue
+						}
+						sourceFiles, testFiles = diff.FilterByLanguage(changed, l)
+					} else {
+						sourceFiles, testFiles, err = lang.FindFiles(dir, l)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
+							continue
+						}
 					}
 
 					for _, f := range sourceFiles {
@@ -154,6 +169,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&specPath, "spec", "", "path to vexspec.yaml (default: .vex/vexspec.yaml)")
 	cmd.Flags().StringVar(&section, "section", "", "check only this section")
 	cmd.Flags().BoolVar(&useDrift, "drift", false, "only check sections with changes since last check")
+	cmd.Flags().BoolVar(&useDiff, "diff", false, "only check git-changed files")
 
 	return cmd
 }
