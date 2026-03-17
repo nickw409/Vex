@@ -30,6 +30,7 @@ type claudeUsage struct {
 }
 
 func (c *ClaudeCLI) Complete(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
+	log.Info("calling claude cli (model=%s, prompt=%d chars)", c.Model, len(req.UserPrompt))
 	cmd := c.buildCmd(ctx, req)
 	cmd.Stdin = strings.NewReader(req.UserPrompt)
 

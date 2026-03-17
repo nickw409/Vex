@@ -96,7 +96,7 @@ func extendSection(cmd *cobra.Command, p provider.Provider, specPath, sectionNam
 		added += len(sub.Behaviors)
 	}
 
-	fmt.Fprintf(os.Stderr, "Extended section %q: added %d behavior(s)\n", sectionName, added)
+	log.Info("extended section %q: added %d behavior(s)", sectionName, added)
 	return nil
 }
 
@@ -119,9 +119,9 @@ func createSpec(path string, sections []spec.Section) error {
 		return fmt.Errorf("writing spec: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Created %s with %d section(s)\n", path, len(sections))
+	log.Info("created %s with %d section(s)", path, len(sections))
 	for _, sec := range sections {
-		fmt.Fprintf(os.Stderr, "  - %s (%d behaviors)\n", sec.Name, len(sec.Behaviors))
+		log.Info("  - %s (%d behaviors)", sec.Name, len(sec.Behaviors))
 	}
 	return nil
 }
@@ -138,9 +138,9 @@ func appendSections(path string, existing *spec.ProjectSpec, sections []spec.Sec
 		return fmt.Errorf("writing spec: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Added %d section(s) to %s\n", len(sections), path)
+	log.Info("added %d section(s) to %s", len(sections), path)
 	for _, sec := range sections {
-		fmt.Fprintf(os.Stderr, "  - %s (%d behaviors)\n", sec.Name, len(sec.Behaviors))
+		log.Info("  - %s (%d behaviors)", sec.Name, len(sec.Behaviors))
 	}
 	return nil
 }

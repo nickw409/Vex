@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/nickw409/vex/internal/diff"
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/spec"
 	"github.com/spf13/cobra"
 )
@@ -34,11 +35,11 @@ func newDriftCmd() *cobra.Command {
 
 			since := diff.ReportModTime(cwd)
 			if since.IsZero() {
-				fmt.Fprintln(os.Stderr, "no previous check found — run vex check first")
+				log.Info("no previous check found — run vex check first")
 				os.Exit(2)
 			}
 
-			fmt.Fprintf(os.Stderr, "checking changes since last check (%s)\n", since.Format("2006-01-02 15:04:05"))
+			log.Info("checking changes since last check (%s)", since.Format("2006-01-02 15:04:05"))
 
 			report := driftReport{
 				Drifted: []diff.DriftResult{},
@@ -53,7 +54,7 @@ func newDriftCmd() *cobra.Command {
 
 				result, err := diff.Drift(cwd, paths, since)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: drift check failed for %s: %v\n", section.Name, err)
+					log.Info("warning: drift check failed for %s: %v", section.Name, err)
 					continue
 				}
 

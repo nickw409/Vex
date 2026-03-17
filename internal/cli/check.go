@@ -57,31 +57,33 @@ func newCheckCmd() *cobra.Command {
 				}
 				since := diff.ReportModTime(cwd)
 				if since.IsZero() {
-					fmt.Fprintln(os.Stderr, "no previous check found, checking all sections")
+					log.Info("no previous check found, checking all sections")
 				} else {
+					log.Info("checking drift since %s", since.Format("2006-01-02 15:04:05"))
 					var drifted []spec.Section
 					for _, sec := range sections {
 						paths := spec.SectionPaths(&sec)
 						result, err := diff.Drift(cwd, paths, since)
 						if err != nil {
-							fmt.Fprintf(os.Stderr, "warning: drift check failed for %s: %v\n", sec.Name, err)
+							log.Info("warning: drift check failed for %s: %v", sec.Name, err)
 							drifted = append(drifted, sec)
 							continue
 						}
 						if result != nil {
 							drifted = append(drifted, sec)
 						} else {
-							fmt.Fprintf(os.Stderr, "skipping clean section %q\n", sec.Name)
+							log.Info("skipping clean section %q", sec.Name)
 						}
 					}
 					sections = drifted
 					if len(sections) == 0 {
-						fmt.Fprintln(os.Stderr, "all sections clean, nothing to check")
+						log.Info("all sections clean, nothing to check")
 						return emptyReport(ps)
 					}
 				}
 			}
 
+			log.Info("discovering files")
 			var inputs []check.SectionInput
 			for i := range sections {
 				sec := &sections[i]
@@ -101,13 +103,13 @@ func newCheckCmd() *cobra.Command {
 				for _, dir := range paths {
 					l, err := lang.Detect(dir, cfg.Languages)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
+						log.Info("warning: skipping path %s: %v", dir, err)
 						continue
 					}
 
 					sourceFiles, testFiles, err := lang.FindFiles(dir, l)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "warning: skipping path %s: %v\n", dir, err)
+						log.Info("warning: skipping path %s: %v", dir, err)
 						continue
 					}
 
@@ -128,10 +130,11 @@ func newCheckCmd() *cobra.Command {
 				}
 
 				if len(testMap) == 0 && len(srcMap) == 0 {
-					fmt.Fprintf(os.Stderr, "warning: no files found for section %q\n", sec.Name)
+					log.Info("warning: no files found for section %q", sec.Name)
 					continue
 				}
 
+				log.Info("section %q: %d source, %d test files", sec.Name, len(srcMap), len(testMap))
 				inputs = append(inputs, check.SectionInput{
 					Section:     sec,
 					Behaviors:   behaviors,
@@ -147,7 +150,9 @@ func newCheckCmd() *cobra.Command {
 			log.Info("starting check with %d section(s), concurrency=%d", len(inputs), cfg.MaxConcurrency)
 			r, err := check.RunProject(cmd.Context(), p, ps, inputs, cfg.MaxConcurrency)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				log.Info("check completed with errors: %v", err)
+			} else {
+				log.Info("check complete: %d gaps, %d covered", len(r.Gaps), len(r.Covered))
 			}
 
 			return outputReport(r)
