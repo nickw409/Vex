@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/spec"
 	"github.com/spf13/cobra"
@@ -32,10 +33,12 @@ func newValidateCmd() *cobra.Command {
 				return err
 			}
 
+			log.Info("validating spec")
 			result, err := spec.ValidateProject(cmd.Context(), p, ps)
 			if err != nil {
 				return err
 			}
+			log.Info("validation complete")
 
 			out, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {

@@ -7,6 +7,7 @@ import (
 	"github.com/nickw409/vex/internal/check"
 	"github.com/nickw409/vex/internal/diff"
 	"github.com/nickw409/vex/internal/lang"
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/report"
 	"github.com/nickw409/vex/internal/spec"
@@ -23,6 +24,7 @@ func newCheckCmd() *cobra.Command {
 		Short: "Check test coverage against a vexspec",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Info("loading spec")
 			ps, err := spec.LoadProject(specPath)
 			if err != nil {
 				return err
@@ -142,6 +144,7 @@ func newCheckCmd() *cobra.Command {
 				return emptyReport(ps)
 			}
 
+			log.Info("starting check with %d section(s), concurrency=%d", len(inputs), cfg.MaxConcurrency)
 			r, err := check.RunProject(cmd.Context(), p, ps, inputs, cfg.MaxConcurrency)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)

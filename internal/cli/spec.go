@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/spec"
 	"github.com/spf13/cobra"
@@ -30,9 +31,11 @@ Use --extend to add behaviors to an existing section instead of creating a new o
 			specPath := ".vex/vexspec.yaml"
 
 			if extend != "" {
+				log.Info("extending section %q", extend)
 				return extendSection(cmd, p, specPath, extend, args[0])
 			}
 
+			log.Info("generating spec from description")
 			sections, err := spec.Generate(cmd.Context(), p, args[0])
 			if err != nil {
 				return err

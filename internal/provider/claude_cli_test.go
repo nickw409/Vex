@@ -1,10 +1,8 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -94,10 +92,14 @@ func TestCompletePassesStdin(t *testing.T) {
 }
 
 func TestParseResponseLogsUsage(t *testing.T) {
-	var buf bytes.Buffer
-	original := logger
-	logger = log.New(&buf, "", 0)
-	defer func() { logger = original }()
+	// Capture stderr where log.Info writes
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
 
 	data := []byte(`{
 		"result": "test",
@@ -106,9 +108,14 @@ func TestParseResponseLogsUsage(t *testing.T) {
 		"usage": {"input_tokens": 100, "output_tokens": 50, "cache_creation_input_tokens": 25, "cache_read_input_tokens": 75}
 	}`)
 
-	resp, err := parseResponse(data)
-	if err != nil {
-		t.Fatal(err)
+	resp, parseErr := parseResponse(data)
+
+	w.Close()
+	captured, _ := io.ReadAll(r)
+	logged := string(captured)
+
+	if parseErr != nil {
+		t.Fatal(parseErr)
 	}
 
 	// Verify cache tokens are included in total input tokens (100+25+75=200)
@@ -116,9 +123,8 @@ func TestParseResponseLogsUsage(t *testing.T) {
 		t.Errorf("expected 200 total input tokens (100+25+75), got %d", resp.Usage.InputTokens)
 	}
 
-	logged := buf.String()
-	if !strings.Contains(logged, "[vex]") {
-		t.Errorf("expected log to contain '[vex]', got %q", logged)
+	if !strings.Contains(logged, "[vex") {
+		t.Errorf("expected log to contain '[vex', got %q", logged)
 	}
 	if !strings.Contains(logged, "200 in") {
 		t.Errorf("expected log to contain '200 in', got %q", logged)

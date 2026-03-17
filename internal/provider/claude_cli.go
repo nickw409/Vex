@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 	"os/exec"
 	"strings"
-)
 
-var logger = log.New(os.Stderr, "", 0)
+	"github.com/nickw409/vex/internal/log"
+)
 
 type ClaudeCLI struct {
 	Model string
@@ -73,7 +71,7 @@ func parseResponse(data []byte) (CompletionResponse, error) {
 		DurationMS:   out.DurationMS,
 	}
 
-	logger.Printf("[vex] tokens: %d in / %d out | cost: $%.4f | time: %.1fs",
+	log.Info("tokens: %d in / %d out | cost: $%.4f | time: %.1fs",
 		usage.InputTokens, usage.OutputTokens, usage.CostUSD, float64(usage.DurationMS)/1000)
 
 	return CompletionResponse{

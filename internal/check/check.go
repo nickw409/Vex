@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/report"
 	"github.com/nickw409/vex/internal/spec"
@@ -109,8 +110,16 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	}
 
 	// Pass 1: test files only
+	names := make([]string, len(inputs))
+	for i, in := range inputs {
+		names[i] = in.Section.Name
+	}
+	log.Info("pass 1: analyzing tests for %d section(s): %v", len(inputs), names)
+
 	pass1Results := make([]sectionResult, len(inputs))
 	runParallel(ctx, p, inputs, pass1Results, maxConcurrency, true)
+
+	log.Info("pass 1 complete")
 
 	// Determine which sections need pass 2
 	var pass2Inputs []SectionInput
@@ -135,7 +144,15 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	// Pass 2: source + test files for uncovered behaviors only
 	pass2Results := make([]sectionResult, len(pass2Inputs))
 	if len(pass2Inputs) > 0 {
+		p2Names := make([]string, len(pass2Inputs))
+		for i, in := range pass2Inputs {
+			p2Names[i] = in.Section.Name
+		}
+		log.Info("pass 2: deep analysis for %d section(s): %v", len(pass2Inputs), p2Names)
 		runParallel(ctx, p, pass2Inputs, pass2Results, maxConcurrency, false)
+		log.Info("pass 2 complete")
+	} else {
+		log.Info("pass 2: skipped, all behaviors covered")
 	}
 
 	// Merge results
@@ -208,6 +225,12 @@ func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput
 
 			sr := sectionResult{section: si.Section.Name}
 
+			pass := "pass 1"
+			if !testOnly {
+				pass = "pass 2"
+			}
+			log.Info("%s: starting %q", pass, si.Section.Name)
+
 			var gaps []report.Gap
 			var covered []report.Covered
 			var err error
@@ -220,9 +243,11 @@ func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput
 
 			if err != nil {
 				sr.err = fmt.Errorf("section %q: %w", si.Section.Name, err)
+				log.Info("%s: %q failed: %v", pass, si.Section.Name, err)
 			} else {
 				sr.gaps = gaps
 				sr.covered = covered
+				log.Info("%s: %q done — %d gaps, %d covered", pass, si.Section.Name, len(gaps), len(covered))
 			}
 			results[idx] = sr
 		}(i, input)
