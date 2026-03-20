@@ -272,6 +272,52 @@ func TestDetectSkipsVendor(t *testing.T) {
 	}
 }
 
+func TestDetectRust(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.rs")
+	touch(t, dir, "lib.rs")
+	touch(t, dir, "lib_test.rs")
+
+	l, err := Detect(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Name != "rust" {
+		t.Errorf("expected rust, got %s", l.Name)
+	}
+}
+
+func TestDetectConfiguredLanguage(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.rb")
+	touch(t, dir, "test_main.rb")
+
+	overrides := map[string]config.LanguageConfig{
+		"ruby": {
+			TestPatterns:   []string{"test_*.rb", "*_test.rb"},
+			SourcePatterns: []string{"*.rb"},
+		},
+	}
+
+	l, err := Detect(dir, overrides)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Name != "ruby" {
+		t.Errorf("expected ruby, got %s", l.Name)
+	}
+	if l.TestPatterns[0] != "test_*.rb" {
+		t.Errorf("expected test_*.rb pattern, got %s", l.TestPatterns[0])
+	}
+}
+
+func TestBuiltinLanguagesIncludesRust(t *testing.T) {
+	langs := BuiltinLanguages()
+	if _, ok := langs["rust"]; !ok {
+		t.Error("expected rust in builtin languages")
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {

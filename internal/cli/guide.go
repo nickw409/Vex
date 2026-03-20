@@ -205,6 +205,9 @@ Add behaviors to an existing section:
   vex spec "desc" --extend "Name"    # add to existing section
   vex drift                          # show which sections changed
   vex init                           # create vex.yaml config
+  vex lang add rust --test-patterns "*_test.rs" --source-patterns "*.rs"
+  vex lang list                      # list available languages
+  vex lang remove rust               # remove a configured language
   vex guide                          # print this guide
 
 ## Output Files

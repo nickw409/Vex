@@ -211,6 +211,105 @@ func TestLoadPartialConfigPreservesExplicitValues(t *testing.T) {
 	}
 }
 
+func TestAddLanguage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vex.yaml")
+
+	// AddLanguage should create the file if it doesn't exist.
+	lc := LanguageConfig{
+		TestPatterns:   []string{"*_test.rs"},
+		SourcePatterns: []string{"*.rs"},
+	}
+	if err := AddLanguage(path, "rust", lc); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rust, ok := cfg.Languages["rust"]
+	if !ok {
+		t.Fatal("expected rust language in config")
+	}
+	if rust.TestPatterns[0] != "*_test.rs" {
+		t.Errorf("expected *_test.rs, got %s", rust.TestPatterns[0])
+	}
+	if rust.SourcePatterns[0] != "*.rs" {
+		t.Errorf("expected *.rs, got %s", rust.SourcePatterns[0])
+	}
+}
+
+func TestAddLanguageToExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vex.yaml")
+
+	if err := WriteDefault(path); err != nil {
+		t.Fatal(err)
+	}
+
+	lc := LanguageConfig{
+		TestPatterns:   []string{"*_test.rs"},
+		SourcePatterns: []string{"*.rs"},
+	}
+	if err := AddLanguage(path, "rust", lc); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Provider != "claude-cli" {
+		t.Errorf("expected provider preserved, got %s", cfg.Provider)
+	}
+	if _, ok := cfg.Languages["rust"]; !ok {
+		t.Error("expected rust language added")
+	}
+}
+
+func TestRemoveLanguage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vex.yaml")
+
+	lc := LanguageConfig{
+		TestPatterns:   []string{"*_test.rs"},
+		SourcePatterns: []string{"*.rs"},
+	}
+	if err := AddLanguage(path, "rust", lc); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveLanguage(path, "rust"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Languages != nil {
+		t.Errorf("expected nil languages after removing last one, got %v", cfg.Languages)
+	}
+}
+
+func TestRemoveLanguageNotFound(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vex.yaml")
+
+	if err := WriteDefault(path); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RemoveLanguage(path, "rust")
+	if err == nil {
+		t.Error("expected error removing nonexistent language")
+	}
+}
+
 func TestLoadEmptyPathNoVexYaml(t *testing.T) {
 	dir := t.TempDir()
 	child := filepath.Join(dir, "a", "b")

@@ -74,6 +74,54 @@ func WriteDefault(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
+// Save writes the config to the given path.
+func Save(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// AddLanguage adds or updates a language in the config file at path.
+// If the file does not exist, a default config is created first.
+func AddLanguage(path string, name string, lc LanguageConfig) error {
+	cfg, err := loadOrDefault(path)
+	if err != nil {
+		return err
+	}
+
+	if cfg.Languages == nil {
+		cfg.Languages = make(map[string]LanguageConfig)
+	}
+	cfg.Languages[name] = lc
+	return Save(path, cfg)
+}
+
+// RemoveLanguage removes a language from the config file at path.
+func RemoveLanguage(path string, name string) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := cfg.Languages[name]; !ok {
+		return fmt.Errorf("language %q not found in config", name)
+	}
+	delete(cfg.Languages, name)
+	if len(cfg.Languages) == 0 {
+		cfg.Languages = nil
+	}
+	return Save(path, cfg)
+}
+
+func loadOrDefault(path string) (*Config, error) {
+	if _, err := os.Stat(path); err != nil {
+		return Default(), nil
+	}
+	return Load(path)
+}
+
 func find() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {

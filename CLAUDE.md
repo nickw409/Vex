@@ -47,6 +47,9 @@ vex validate                                     # validate spec completeness
 vex spec "description"                           # generate spec sections from task
 vex spec "description" --extend Config           # add behaviors to existing section
 vex drift                                        # check for code changes since last check
+vex lang add rust --test-patterns "*_test.rs" --source-patterns "*.rs"
+vex lang list                                    # list built-in + configured languages
+vex lang remove rust                             # remove a configured language
 vex init                                         # create vex.yaml config
 vex guide                                        # print agent instructions for writing specs
 vex version                                      # print version, commit, build date
@@ -57,7 +60,7 @@ vex version                                      # print version, commit, build 
 - **Spec-driven** — spec is the source of truth, not the code
 - **Two-pass check** — pass 1 sends only tests (cheap triage), pass 2 sends source only for uncovered behaviors
 - **Drift-aware** — `--drift` skips clean sections, converging cost toward zero for stable code
-- **Language agnostic** — auto-detects Go, TypeScript, JavaScript, Python, Java
+- **Language agnostic** — auto-detects Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP; custom languages can be added via `vex lang add`
 - **Agent-first** — JSON output, config files over CLI flags, guide command for agent instructions
 - **Bounded** — spec defines the scope, no infinite nitpicking
 

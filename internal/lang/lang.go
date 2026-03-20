@@ -41,17 +41,96 @@ var builtinLanguages = map[string]Language{
 		TestPatterns:   []string{"*Test.java"},
 		SourcePatterns: []string{"*.java"},
 	},
+	"rust": {
+		Name:           "rust",
+		TestPatterns:   []string{"*_test.rs"},
+		SourcePatterns: []string{"*.rs"},
+	},
+	"c": {
+		Name:           "c",
+		TestPatterns:   []string{"test_*.c", "*_test.c"},
+		SourcePatterns: []string{"*.c", "*.h"},
+	},
+	"cpp": {
+		Name:           "cpp",
+		TestPatterns:   []string{"test_*.cpp", "*_test.cpp", "test_*.cc", "*_test.cc"},
+		SourcePatterns: []string{"*.cpp", "*.cc", "*.hpp"},
+	},
+	"csharp": {
+		Name:           "csharp",
+		TestPatterns:   []string{"*Tests.cs", "*Test.cs"},
+		SourcePatterns: []string{"*.cs"},
+	},
+	"ruby": {
+		Name:           "ruby",
+		TestPatterns:   []string{"test_*.rb", "*_test.rb", "*_spec.rb"},
+		SourcePatterns: []string{"*.rb"},
+	},
+	"kotlin": {
+		Name:           "kotlin",
+		TestPatterns:   []string{"*Test.kt", "*Tests.kt"},
+		SourcePatterns: []string{"*.kt"},
+	},
+	"swift": {
+		Name:           "swift",
+		TestPatterns:   []string{"*Tests.swift", "*Test.swift"},
+		SourcePatterns: []string{"*.swift"},
+	},
+	"php": {
+		Name:           "php",
+		TestPatterns:   []string{"*Test.php", "*_test.php"},
+		SourcePatterns: []string{"*.php"},
+	},
+}
+
+// BuiltinLanguages returns a copy of the built-in language definitions.
+func BuiltinLanguages() map[string]Language {
+	out := make(map[string]Language, len(builtinLanguages))
+	for k, v := range builtinLanguages {
+		out[k] = v
+	}
+	return out
 }
 
 func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, error) {
-	if len(overrides) > 0 {
-		for name, lc := range overrides {
-			return &Language{
-				Name:           name,
-				TestPatterns:   lc.TestPatterns,
-				SourcePatterns: lc.SourcePatterns,
-			}, nil
+	// Build the full set of known languages: builtins + overrides.
+	// Overrides replace builtins with the same name.
+	all := make(map[string]Language, len(builtinLanguages)+len(overrides))
+	for k, v := range builtinLanguages {
+		all[k] = v
+	}
+	for name, lc := range overrides {
+		all[name] = Language{
+			Name:           name,
+			TestPatterns:   lc.TestPatterns,
+			SourcePatterns: lc.SourcePatterns,
 		}
+	}
+
+	// Build extension-to-language map from source patterns.
+	// Patterns like "*.rs" map extension ".rs" to language name.
+	// Overrides are applied second so they take priority over builtins.
+	extMap := make(map[string]string)
+	for name, l := range builtinLanguages {
+		for _, p := range l.SourcePatterns {
+			ext := filepath.Ext(p)
+			if ext != "" {
+				extMap[strings.ToLower(ext)] = name
+			}
+		}
+	}
+	for name, lc := range overrides {
+		for _, p := range lc.SourcePatterns {
+			ext := filepath.Ext(p)
+			if ext != "" {
+				extMap[strings.ToLower(ext)] = name
+			}
+		}
+	}
+
+	hasPackageJSON := false
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+		hasPackageJSON = true
 	}
 
 	counts := make(map[string]int)
@@ -68,22 +147,13 @@ func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, 
 			return nil
 		}
 
-		name := d.Name()
-		ext := strings.ToLower(filepath.Ext(name))
-
-		switch ext {
-		case ".go":
-			counts["go"]++
-		case ".ts":
-			counts["typescript"]++
-		case ".js":
-			if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
-				counts["javascript"]++
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if langName, ok := extMap[ext]; ok {
+			// JavaScript requires package.json to avoid false positives.
+			if langName == "javascript" && !hasPackageJSON {
+				return nil
 			}
-		case ".py":
-			counts["python"]++
-		case ".java":
-			counts["java"]++
+			counts[langName]++
 		}
 		return nil
 	})
@@ -94,14 +164,14 @@ func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, 
 
 	best := ""
 	bestCount := 0
-	for lang, count := range counts {
+	for name, count := range counts {
 		if count > bestCount {
-			best = lang
+			best = name
 			bestCount = count
 		}
 	}
 
-	l := builtinLanguages[best]
+	l := all[best]
 	return &l, nil
 }
 
