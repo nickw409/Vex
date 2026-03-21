@@ -105,13 +105,13 @@ func newCheckCmd() *cobra.Command {
 
 				// path: entries — walk directories for all source and test files
 				for _, dir := range paths {
-					l, err := lang.Detect(dir, cfg.Languages)
+					langs, err := lang.DetectAll(dir, cfg.Languages)
 					if err != nil {
 						log.Info("warning: skipping path %s: %v", dir, err)
 						continue
 					}
 
-					sourceFiles, testFiles, err := lang.FindFiles(dir, l)
+					sourceFiles, testFiles, err := lang.FindFilesMulti(dir, langs)
 					if err != nil {
 						log.Info("warning: skipping path %s: %v", dir, err)
 						continue
@@ -136,14 +136,14 @@ func newCheckCmd() *cobra.Command {
 				// file: entries — classify as source or test, then read
 				if len(files) > 0 {
 					// Detect language from the first file's directory
-					l, langErr := lang.Detect(filepath.Dir(files[0]), cfg.Languages)
+					langs, langErr := lang.DetectAll(filepath.Dir(files[0]), cfg.Languages)
 
 					for _, f := range files {
 						data, err := os.ReadFile(f)
 						if err != nil {
 							return fmt.Errorf("reading %s: %w", f, err)
 						}
-						if langErr == nil && lang.IsTestFile(f, l) {
+						if langErr == nil && lang.IsTestFileMulti(f, langs) {
 							testMap[f] = string(data)
 						} else {
 							srcMap[f] = string(data)

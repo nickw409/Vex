@@ -318,6 +318,145 @@ func TestBuiltinLanguagesIncludesRust(t *testing.T) {
 	}
 }
 
+func TestBuiltinLanguagesIncludesCUDA(t *testing.T) {
+	langs := BuiltinLanguages()
+	if _, ok := langs["cuda"]; !ok {
+		t.Error("expected cuda in builtin languages")
+	}
+}
+
+func TestDetectCUDA(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "kernel.cu")
+	touch(t, dir, "helpers.cuh")
+	touch(t, dir, "test_kernel.cu")
+
+	l, err := Detect(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Name != "cuda" {
+		t.Errorf("expected cuda, got %s", l.Name)
+	}
+}
+
+func TestDetectAllMultipleLanguages(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.rs")
+	touch(t, dir, "lib.rs")
+	touch(t, dir, "kernel.cu")
+	touch(t, dir, "helpers.cuh")
+
+	langs, err := DetectAll(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) != 2 {
+		t.Fatalf("expected 2 languages, got %d", len(langs))
+	}
+
+	names := map[string]bool{}
+	for _, l := range langs {
+		names[l.Name] = true
+	}
+	if !names["rust"] {
+		t.Error("expected rust in detected languages")
+	}
+	if !names["cuda"] {
+		t.Error("expected cuda in detected languages")
+	}
+}
+
+func TestDetectAllSortedByCount(t *testing.T) {
+	dir := t.TempDir()
+	// 3 rust files, 1 cuda file — rust should be first
+	touch(t, dir, "main.rs")
+	touch(t, dir, "lib.rs")
+	touch(t, dir, "utils.rs")
+	touch(t, dir, "kernel.cu")
+
+	langs, err := DetectAll(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) < 2 {
+		t.Fatalf("expected at least 2 languages, got %d", len(langs))
+	}
+	if langs[0].Name != "rust" {
+		t.Errorf("expected rust first (most files), got %s", langs[0].Name)
+	}
+}
+
+func TestDetectAllEmpty(t *testing.T) {
+	dir := t.TempDir()
+	_, err := DetectAll(dir, nil)
+	if err == nil {
+		t.Error("expected error for empty directory")
+	}
+}
+
+func TestFindFilesMulti(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.rs")
+	touch(t, dir, "lib_test.rs")
+	touch(t, dir, "kernel.cu")
+	touch(t, dir, "helpers.cuh")
+	touch(t, dir, "test_kernel.cu")
+	touch(t, dir, "README.md")
+
+	langs := []*Language{
+		{
+			Name:           "rust",
+			TestPatterns:   []string{"*_test.rs"},
+			SourcePatterns: []string{"*.rs"},
+		},
+		{
+			Name:           "cuda",
+			TestPatterns:   []string{"test_*.cu", "*_test.cu"},
+			SourcePatterns: []string{"*.cu", "*.cuh"},
+		},
+	}
+
+	src, tests, err := FindFilesMulti(dir, langs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 3 {
+		t.Errorf("expected 3 source files (main.rs, kernel.cu, helpers.cuh), got %d", len(src))
+	}
+	if len(tests) != 2 {
+		t.Errorf("expected 2 test files (lib_test.rs, test_kernel.cu), got %d", len(tests))
+	}
+}
+
+func TestIsTestFileMulti(t *testing.T) {
+	langs := []*Language{
+		{
+			Name:           "rust",
+			TestPatterns:   []string{"*_test.rs"},
+			SourcePatterns: []string{"*.rs"},
+		},
+		{
+			Name:           "cuda",
+			TestPatterns:   []string{"test_*.cu", "*_test.cu"},
+			SourcePatterns: []string{"*.cu", "*.cuh"},
+		},
+	}
+
+	if !IsTestFileMulti("lib_test.rs", langs) {
+		t.Error("expected lib_test.rs to be a test file")
+	}
+	if !IsTestFileMulti("test_kernel.cu", langs) {
+		t.Error("expected test_kernel.cu to be a test file")
+	}
+	if IsTestFileMulti("main.rs", langs) {
+		t.Error("expected main.rs to not be a test file")
+	}
+	if IsTestFileMulti("kernel.cu", langs) {
+		t.Error("expected kernel.cu to not be a test file")
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {

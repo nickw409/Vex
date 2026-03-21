@@ -76,6 +76,10 @@ Both work on sections and subsections. You can combine them:
   path: tests/           # walk for test files
   file: src/auth.py      # just this source file
 
+Vex auto-detects all languages in a directory and discovers files across
+all of them. For multi-language projects (e.g., Rust + CUDA), all source
+and test files are found regardless of language.
+
 Files listed under "file" are classified as source or test using language
 patterns (e.g., test_*.py, *_test.go). This works with any project layout:
 

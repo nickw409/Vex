@@ -32,17 +32,27 @@ func ChangedFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func FilterByLanguage(files []string, l *lang.Language) (sourceFiles []string, testFiles []string) {
+func FilterByLanguage(files []string, langs []*lang.Language) (sourceFiles []string, testFiles []string) {
 	for _, f := range files {
 		name := filepath.Base(f)
 
-		if matchesAny(name, l.TestPatterns) {
-			testFiles = append(testFiles, f)
+		isTest := false
+		for _, l := range langs {
+			if matchesAny(name, l.TestPatterns) {
+				testFiles = append(testFiles, f)
+				isTest = true
+				break
+			}
+		}
+		if isTest {
 			continue
 		}
 
-		if matchesAny(name, l.SourcePatterns) {
-			sourceFiles = append(sourceFiles, f)
+		for _, l := range langs {
+			if matchesAny(name, l.SourcePatterns) {
+				sourceFiles = append(sourceFiles, f)
+				break
+			}
 		}
 	}
 	return

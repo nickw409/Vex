@@ -60,7 +60,7 @@ vex version                                      # print version, commit, build 
 - **Spec-driven** — spec is the source of truth, not the code
 - **Two-pass check** — pass 1 sends only tests (cheap triage), pass 2 sends source only for uncovered behaviors
 - **Drift-aware** — `--drift` skips clean sections, converging cost toward zero for stable code
-- **Language agnostic** — auto-detects Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP; custom languages can be added via `vex lang add`
+- **Language agnostic** — auto-detects Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP, CUDA; multi-language projects are fully supported; custom languages can be added via `vex lang add`
 - **Agent-first** — JSON output, config files over CLI flags, guide command for agent instructions
 - **Bounded** — spec defines the scope, no infinite nitpicking
 

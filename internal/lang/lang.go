@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/nickw409/vex/internal/config"
@@ -81,6 +82,11 @@ var builtinLanguages = map[string]Language{
 		TestPatterns:   []string{"*Test.php", "*_test.php"},
 		SourcePatterns: []string{"*.php"},
 	},
+	"cuda": {
+		Name:           "cuda",
+		TestPatterns:   []string{"test_*.cu", "*_test.cu"},
+		SourcePatterns: []string{"*.cu", "*.cuh"},
+	},
 }
 
 // BuiltinLanguages returns a copy of the built-in language definitions.
@@ -92,7 +98,9 @@ func BuiltinLanguages() map[string]Language {
 	return out
 }
 
-func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, error) {
+// DetectAll returns all languages found in the directory, sorted by file count
+// (most files first). Returns an error only if no languages are detected.
+func DetectAll(dir string, overrides map[string]config.LanguageConfig) ([]*Language, error) {
 	// Build the full set of known languages: builtins + overrides.
 	// Overrides replace builtins with the same name.
 	all := make(map[string]Language, len(builtinLanguages)+len(overrides))
@@ -162,17 +170,37 @@ func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, 
 		return nil, fmt.Errorf("no supported language detected in %s", dir)
 	}
 
-	best := ""
-	bestCount := 0
-	for name, count := range counts {
-		if count > bestCount {
-			best = name
-			bestCount = count
-		}
+	type langCount struct {
+		name  string
+		count int
 	}
+	var sorted []langCount
+	for name, count := range counts {
+		sorted = append(sorted, langCount{name, count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].name < sorted[j].name
+	})
 
-	l := all[best]
-	return &l, nil
+	var result []*Language
+	for _, lc := range sorted {
+		l := all[lc.name]
+		result = append(result, &l)
+	}
+	return result, nil
+}
+
+// Detect returns the single most-prevalent language in the directory.
+// For multi-language projects, use DetectAll instead.
+func Detect(dir string, overrides map[string]config.LanguageConfig) (*Language, error) {
+	langs, err := DetectAll(dir, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return langs[0], nil
 }
 
 func FindFiles(dir string, lang *Language) (sourceFiles []string, testFiles []string, err error) {
@@ -205,9 +233,58 @@ func FindFiles(dir string, lang *Language) (sourceFiles []string, testFiles []st
 	return
 }
 
+// FindFilesMulti discovers source and test files for multiple languages in a single walk.
+func FindFilesMulti(dir string, langs []*Language) (sourceFiles []string, testFiles []string, err error) {
+	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			base := d.Name()
+			if base == "node_modules" || base == "vendor" || base == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		name := d.Name()
+
+		// Check test patterns across all languages first.
+		for _, l := range langs {
+			if matchesAny(name, l.TestPatterns) {
+				testFiles = append(testFiles, path)
+				return nil
+			}
+		}
+
+		// Then check source patterns.
+		for _, l := range langs {
+			if matchesAny(name, l.SourcePatterns) {
+				sourceFiles = append(sourceFiles, path)
+				return nil
+			}
+		}
+
+		return nil
+	})
+
+	return
+}
+
 // IsTestFile reports whether the given filename matches the language's test patterns.
 func IsTestFile(filename string, lang *Language) bool {
 	return matchesAny(filepath.Base(filename), lang.TestPatterns)
+}
+
+// IsTestFileMulti reports whether the given filename matches any language's test patterns.
+func IsTestFileMulti(filename string, langs []*Language) bool {
+	base := filepath.Base(filename)
+	for _, l := range langs {
+		if matchesAny(base, l.TestPatterns) {
+			return true
+		}
+	}
+	return false
 }
 
 func isTest(name string, patterns []string) bool {
