@@ -1,19 +1,62 @@
 # Vex
 
-Spec-driven test coverage auditor. Verifies that tests fully cover intended behavior described in a spec, not just what happens to be implemented.
+Spec-driven test coverage auditor for AI agent workflows. Verifies that tests fully cover intended behavior described in a spec — not just what happens to be implemented.
+
+Built in Go. ~3,000 lines of application code, ~3,500 lines of tests. Zero external dependencies beyond the standard library and Cobra for CLI.
 
 ## The Problem
 
-AI agents write code and tests. Tests pass. But behaviors are missing or not wired up. The tests verify what was written, not what was intended.
+AI agents write code and tests in a tight loop. Tests pass. But behaviors are missing, partially implemented, or not wired up. Traditional coverage tools measure lines executed, not whether the *intended behavior* is actually tested. The tests verify what was written, not what was intended.
 
-## How It Works
+Vex closes that gap. It takes a behavioral spec — a structured YAML document describing what the software *should* do — and uses an LLM to audit whether the test suite actually exercises each described behavior.
 
-1. Write a spec describing intended behaviors (or generate one from a task description)
-2. Run `vex check` — it sends spec + code + tests to an LLM
-3. Get a JSON report of gaps (untested behaviors) and coverage
-4. Fix the gaps, repeat until clean
+## Architecture
 
-Vex uses a two-pass strategy: pass 1 sends only test files (cheap triage), pass 2 sends source code only for uncovered behaviors. Well-tested codebases skip pass 2 entirely.
+```
+cmd/vex/              Entry point
+internal/
+  cli/                Cobra command definitions (check, spec, validate, drift, lang, init, guide)
+  config/             vex.yaml parsing and validation
+  provider/           LLM provider abstraction (currently claude-cli)
+  spec/               vexspec.yaml parsing, validation, and generation
+  check/              Core gap detection engine (two-pass LLM analysis)
+  diff/               Git diff parsing and drift detection
+  lang/               Multi-language detection and test file discovery
+  report/             Structured JSON output formatting
+  log/                Timestamped diagnostic logging (stderr)
+  version/            Build-time version injection via ldflags
+install.sh            Standalone binary installer (no Go toolchain required)
+Makefile              Build, test, cross-compile, and release targets
+```
+
+### Two-Pass Gap Detection
+
+The check engine uses a two-pass strategy to minimize LLM cost:
+
+1. **Pass 1 (test-only)**: Sends the behavioral spec and test files to the LLM. Cheap triage — most well-tested behaviors are confirmed covered here and never reach pass 2.
+2. **Pass 2 (source + tests)**: Only behaviors flagged as potentially uncovered in pass 1 are re-analyzed with both source code and test files. This deeper pass catches indirect coverage that isn't obvious from tests alone.
+
+Sections are checked concurrently with bounded parallelism. Well-tested codebases skip pass 2 entirely, converging cost toward zero.
+
+### Drift Detection
+
+`vex check --drift` uses git log and uncommitted change detection to skip sections with no code changes since the last check. Combined with two-pass, this means incremental checks on stable codebases are near-free.
+
+### Multi-Language Detection
+
+Vex auto-detects all languages present in a project simultaneously. A Rust + CUDA project discovers `.rs`, `.cu`, and `.cuh` files in a single directory walk and classifies them correctly across language boundaries. Custom languages can be added at runtime without modifying source.
+
+**Built-in languages (14):** Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP, CUDA
+
+### Agent-First Design
+
+Vex is designed to be invoked by AI agents, not humans directly:
+
+- **JSON output to stdout** — structured reports that agents parse, not human-readable prose
+- **Deterministic exit codes** — 0 (clean), 1 (gaps found), 2 (fatal error)
+- **Config files over CLI flags** — `vex.yaml` for project config, `.vex/vexspec.yaml` for the spec
+- **Guide command** — `vex guide` prints instructions that agents use to write well-formed specs
+- **Spec generation** — `vex spec "description"` generates spec sections from natural language task descriptions
 
 ## Install
 
@@ -26,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/nickw409/vex/main/install.sh | sh
 Install a specific version or to a custom directory:
 
 ```bash
-VEX_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/nickw409/vex/main/install.sh | sh
+VEX_VERSION=v1.3.0 curl -fsSL https://raw.githubusercontent.com/nickw409/vex/main/install.sh | sh
 VEX_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/nickw409/vex/main/install.sh | sh
 ```
 
@@ -121,16 +164,6 @@ JSON to stdout, diagnostics to stderr. Reports are also written to `.vex/`:
 
 Exit codes: 0 = clean, 1 = gaps/suggestions found, 2 = fatal error.
 
-## Cost Optimization
-
-Vex minimizes LLM cost through three mechanisms:
-
-- **Two-pass check**: Pass 1 sends only tests (cheap). Pass 2 sends source only for uncovered behaviors. Skipped entirely when everything is covered.
-- **Drift detection**: `--drift` skips sections with no changes since the last check. Uses git log + uncommitted changes.
-- **Section scoping**: `--section` checks only one section at a time.
-
-Cost converges toward zero as test coverage improves and code stabilizes.
-
 ## Configuration
 
 `vex.yaml` in the project root:
@@ -148,12 +181,6 @@ max_concurrency: 4
 | `max_concurrency` | `4` | Max parallel LLM calls during check |
 | `languages` | auto-detect | Override language detection patterns |
 
-## Supported Languages
-
-Auto-detected by file extensions. Multi-language projects are fully supported — vex detects all languages present and collects source and test files across all of them.
-
-**Built-in:** Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP, CUDA
-
 Add custom languages via CLI or config:
 
 ```bash
@@ -165,6 +192,16 @@ languages:
   mylang:
     test_patterns: ["*_test.x"]
     source_patterns: ["*.x"]
+```
+
+## Releases
+
+Cross-compiled binaries for linux/darwin (amd64/arm64) are published to GitHub Releases. Version, commit hash, and build date are injected at build time via ldflags.
+
+```bash
+git tag v1.X.0 && git push origin v1.X.0
+make VERSION=v1.X.0 release
+gh release create v1.X.0 dist/*.tar.gz --title "v1.X.0"
 ```
 
 ## License
