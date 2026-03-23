@@ -28,6 +28,9 @@ func TestGuideOutput(t *testing.T) {
 		".vex/report.json",
 		".vex/validation.json",
 		"vex validate",
+		"Formulas and Equations",
+		"geometric-brownian-motion",
+		"black-scholes-call",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("guide output should contain %q", want)

@@ -426,6 +426,82 @@ func TestFilterFalseUnspecified(t *testing.T) {
 	}
 }
 
+func TestSystemPromptsContainFormulaInstruction(t *testing.T) {
+	for _, prompt := range []struct {
+		name string
+		text string
+	}{
+		{"pass1SystemPrompt", pass1SystemPrompt},
+		{"pass2SystemPrompt", pass2SystemPrompt},
+	} {
+		if !strings.Contains(prompt.text, "mathematical formula") {
+			t.Errorf("%s should contain 'mathematical formula'", prompt.name)
+		}
+		if !strings.Contains(prompt.text, "known inputs") {
+			t.Errorf("%s should contain 'known inputs'", prompt.name)
+		}
+	}
+}
+
+func TestBuildPass1Prompt(t *testing.T) {
+	input := &SectionInput{
+		Section: &spec.Section{
+			Name:        "Auth",
+			Description: "Authentication module",
+		},
+		Behaviors: []spec.Behavior{
+			{Name: "login", Description: "POST /login returns JWT"},
+		},
+		SourceFiles: map[string]string{
+			"auth.go": "package auth\nfunc Login() {}",
+		},
+		TestFiles: map[string]string{
+			"auth_test.go": "package auth\nfunc TestLogin(t *testing.T) {}",
+		},
+	}
+
+	prompt, err := buildPass1Prompt(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass 1 should include section, behaviors, and test files
+	for _, want := range []string{"Auth", "login", "POST /login", "auth_test.go", "Authentication module"} {
+		if !containsStr(prompt, want) {
+			t.Errorf("pass 1 prompt should contain %q", want)
+		}
+	}
+
+	// Pass 1 should NOT include source files
+	if containsStr(prompt, "auth.go") {
+		t.Error("pass 1 prompt should not contain source files")
+	}
+}
+
+func TestBuildPass1PromptTooLarge(t *testing.T) {
+	large := make([]byte, maxContentSize)
+	for i := range large {
+		large[i] = 'x'
+	}
+
+	input := &SectionInput{
+		Section: &spec.Section{Name: "Big"},
+		Behaviors: []spec.Behavior{
+			{Name: "b", Description: "d"},
+		},
+		SourceFiles: map[string]string{},
+		TestFiles:   map[string]string{"big_test.go": string(large)},
+	}
+
+	_, err := buildPass1Prompt(input)
+	if err == nil {
+		t.Error("expected error for oversized content")
+	}
+	if err != nil && !strings.Contains(err.Error(), "--diff") {
+		t.Errorf("error message should contain '--diff', got: %s", err.Error())
+	}
+}
+
 func TestFilterFalseUnspecifiedEmptyGaps(t *testing.T) {
 	ps := &spec.ProjectSpec{
 		Sections: []spec.Section{

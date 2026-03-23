@@ -346,3 +346,18 @@ func TestParseGenerateResponseSubsectionBehaviorMissingName(t *testing.T) {
 		t.Error("expected error for subsection behavior missing name")
 	}
 }
+
+func TestGenerateSystemPromptFormulaSupport(t *testing.T) {
+	if !strings.Contains(generateSystemPrompt, "mathematical formula") {
+		t.Error("generateSystemPrompt should accept mathematical formulas as valid behaviors")
+	}
+	if !strings.Contains(generateSystemPrompt, "formula") {
+		t.Error("generateSystemPrompt should mention formulas in behavior IS section")
+	}
+}
+
+func TestExtendSystemPromptFormulaSupport(t *testing.T) {
+	if !strings.Contains(generateExtendSystemPrompt, "mathematical formula") {
+		t.Error("generateExtendSystemPrompt should accept mathematical formulas as valid behaviors")
+	}
+}

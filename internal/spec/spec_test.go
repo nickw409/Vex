@@ -3,6 +3,7 @@ package spec
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -307,14 +308,12 @@ sections:
         description: Login
 `)
 
-	ps, err := LoadProject(path)
-	// Currently the code doesn't reject duplicates, so it loads fine.
-	// But we verify the shared list has both entries.
-	if err != nil {
-		t.Fatal(err)
+	_, err := LoadProject(path)
+	if err == nil {
+		t.Error("expected error for duplicate shared behavior names")
 	}
-	if len(ps.Shared) != 2 {
-		t.Errorf("expected 2 shared behaviors, got %d", len(ps.Shared))
+	if err != nil && !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("expected error to mention 'duplicate', got: %s", err.Error())
 	}
 }
 

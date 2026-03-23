@@ -189,3 +189,9 @@ func TestValidateProjectProviderError(t *testing.T) {
 		t.Errorf("expected error to contain 'provider unavailable', got %q", err.Error())
 	}
 }
+
+func TestValidateSystemPromptFormulaTolerance(t *testing.T) {
+	if !strings.Contains(validateSystemPrompt, "Mathematical formulas and equations ARE valid behaviors") {
+		t.Error("validateSystemPrompt should state that formulas are valid behaviors")
+	}
+}

@@ -96,6 +96,9 @@ func (ps *ProjectSpec) validate() error {
 		if b.Description == "" {
 			return fmt.Errorf("shared behavior %q missing required field: description", b.Name)
 		}
+		if sharedNames[b.Name] {
+			return fmt.Errorf("duplicate shared behavior: %q", b.Name)
+		}
 		sharedNames[b.Name] = true
 	}
 

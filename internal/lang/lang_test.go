@@ -457,6 +457,87 @@ func TestIsTestFileMulti(t *testing.T) {
 	}
 }
 
+func TestIsTestFile(t *testing.T) {
+	goLang := &Language{
+		Name:           "go",
+		TestPatterns:   []string{"*_test.go"},
+		SourcePatterns: []string{"*.go"},
+	}
+
+	if !IsTestFile("foo_test.go", goLang) {
+		t.Error("expected foo_test.go to be a test file")
+	}
+	if IsTestFile("foo.go", goLang) {
+		t.Error("expected foo.go to not be a test file")
+	}
+	if IsTestFile("test.py", goLang) {
+		t.Error("expected test.py to not be a test file for Go")
+	}
+}
+
+func TestBuiltinLanguagesComplete(t *testing.T) {
+	langs := BuiltinLanguages()
+	expected := []string{
+		"go", "typescript", "javascript", "python", "java",
+		"rust", "c", "cpp", "csharp", "ruby",
+		"kotlin", "swift", "php", "cuda",
+	}
+	for _, name := range expected {
+		if _, ok := langs[name]; !ok {
+			t.Errorf("expected %q in builtin languages", name)
+		}
+	}
+	if len(langs) != len(expected) {
+		t.Errorf("expected %d builtin languages, got %d", len(expected), len(langs))
+	}
+}
+
+func TestFindFilesMultiSkipsDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create files in skipped directories
+	for _, skip := range []string{"node_modules", "vendor", ".git"} {
+		os.MkdirAll(filepath.Join(dir, skip), 0755)
+		touch(t, filepath.Join(dir, skip), "main.go")
+	}
+	// Create a normal file
+	touch(t, dir, "main.go")
+
+	langs := []*Language{
+		{Name: "go", TestPatterns: []string{"*_test.go"}, SourcePatterns: []string{"*.go"}},
+	}
+
+	src, tests, err := FindFilesMulti(dir, langs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 1 {
+		t.Errorf("expected 1 source file (skipped dirs), got %d", len(src))
+	}
+	if len(tests) != 0 {
+		t.Errorf("expected 0 test files, got %d", len(tests))
+	}
+}
+
+func TestFindFilesMultiDedup(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "util.h")
+
+	// Both C and C++ claim .h files as source
+	langs := []*Language{
+		{Name: "c", TestPatterns: []string{"test_*.c"}, SourcePatterns: []string{"*.c", "*.h"}},
+		{Name: "cpp", TestPatterns: []string{"test_*.cpp"}, SourcePatterns: []string{"*.cpp", "*.h"}},
+	}
+
+	src, _, err := FindFilesMulti(dir, langs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 1 {
+		t.Errorf("expected 1 source file (deduped), got %d", len(src))
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {
