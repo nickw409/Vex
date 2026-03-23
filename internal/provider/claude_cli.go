@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/nickw409/vex/internal/log"
 )
 
 type ClaudeCLI struct {
@@ -30,7 +29,6 @@ type claudeUsage struct {
 }
 
 func (c *ClaudeCLI) Complete(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
-	log.Info("calling claude cli (model=%s, prompt=%d chars)", c.Model, len(req.UserPrompt))
 	cmd := c.buildCmd(ctx, req)
 	cmd.Stdin = strings.NewReader(req.UserPrompt)
 
@@ -71,9 +69,6 @@ func parseResponse(data []byte) (CompletionResponse, error) {
 		CostUSD:      out.TotalCostUSD,
 		DurationMS:   out.DurationMS,
 	}
-
-	log.Info("tokens: %d in / %d out | cost: $%.4f | time: %.1fs",
-		usage.InputTokens, usage.OutputTokens, usage.CostUSD, float64(usage.DurationMS)/1000)
 
 	return CompletionResponse{
 		Content: out.Result,

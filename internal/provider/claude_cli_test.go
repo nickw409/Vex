@@ -91,16 +91,7 @@ func TestCompletePassesStdin(t *testing.T) {
 	}
 }
 
-func TestParseResponseLogsUsage(t *testing.T) {
-	// Capture stderr where log.Info writes
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStderr := os.Stderr
-	os.Stderr = w
-	defer func() { os.Stderr = origStderr }()
-
+func TestParseResponseReturnsUsage(t *testing.T) {
 	data := []byte(`{
 		"result": "test",
 		"total_cost_usd": 0.05,
@@ -108,35 +99,23 @@ func TestParseResponseLogsUsage(t *testing.T) {
 		"usage": {"input_tokens": 100, "output_tokens": 50, "cache_creation_input_tokens": 25, "cache_read_input_tokens": 75}
 	}`)
 
-	resp, parseErr := parseResponse(data)
-
-	w.Close()
-	captured, _ := io.ReadAll(r)
-	logged := string(captured)
-
-	if parseErr != nil {
-		t.Fatal(parseErr)
+	resp, err := parseResponse(data)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// Verify cache tokens are included in total input tokens (100+25+75=200)
 	if resp.Usage.InputTokens != 200 {
 		t.Errorf("expected 200 total input tokens (100+25+75), got %d", resp.Usage.InputTokens)
 	}
-
-	if !strings.Contains(logged, "[vex") {
-		t.Errorf("expected log to contain '[vex', got %q", logged)
+	if resp.Usage.OutputTokens != 50 {
+		t.Errorf("expected 50 output tokens, got %d", resp.Usage.OutputTokens)
 	}
-	if !strings.Contains(logged, "200 in") {
-		t.Errorf("expected log to contain '200 in', got %q", logged)
+	if resp.Usage.CostUSD != 0.05 {
+		t.Errorf("expected cost $0.05, got $%.4f", resp.Usage.CostUSD)
 	}
-	if !strings.Contains(logged, "50 out") {
-		t.Errorf("expected log to contain '50 out', got %q", logged)
-	}
-	if !strings.Contains(logged, "$0.0500") {
-		t.Errorf("expected log to contain '$0.0500', got %q", logged)
-	}
-	if !strings.Contains(logged, "3.0s") {
-		t.Errorf("expected log to contain '3.0s', got %q", logged)
+	if resp.Usage.DurationMS != 3000 {
+		t.Errorf("expected 3000ms duration, got %d", resp.Usage.DurationMS)
 	}
 }
 

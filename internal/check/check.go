@@ -101,6 +101,7 @@ type sectionResult struct {
 	section string
 	gaps    []report.Gap
 	covered []report.Covered
+	usage   provider.TokenUsage
 	err     error
 }
 
@@ -112,16 +113,10 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	}
 
 	// Pass 1: test files only
-	names := make([]string, len(inputs))
-	for i, in := range inputs {
-		names[i] = in.Section.Name
-	}
-	log.Info("pass 1: analyzing tests for %d section(s): %v", len(inputs), names)
+	log.Info("pass 1: analyzing %d section(s)", len(inputs))
 
 	pass1Results := make([]sectionResult, len(inputs))
 	runParallel(ctx, p, inputs, pass1Results, maxConcurrency, true)
-
-	log.Info("pass 1 complete")
 
 	// Determine which sections need pass 2
 	var pass2Inputs []SectionInput
@@ -146,15 +141,8 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	// Pass 2: source + test files for uncovered behaviors only
 	pass2Results := make([]sectionResult, len(pass2Inputs))
 	if len(pass2Inputs) > 0 {
-		p2Names := make([]string, len(pass2Inputs))
-		for i, in := range pass2Inputs {
-			p2Names[i] = in.Section.Name
-		}
-		log.Info("pass 2: deep analysis for %d section(s): %v", len(pass2Inputs), p2Names)
+		log.Info("pass 2: analyzing %d section(s)", len(pass2Inputs))
 		runParallel(ctx, p, pass2Inputs, pass2Results, maxConcurrency, false)
-		log.Info("pass 2 complete")
-	} else {
-		log.Info("pass 2: skipped, all behaviors covered")
 	}
 
 	// Merge results
@@ -207,6 +195,23 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	merged.Gaps = filterFalseUnspecified(merged.Gaps, ps)
 	merged.ComputeSummary(totalBehaviors)
 
+	// Aggregate usage across all passes
+	var totalUsage provider.TokenUsage
+	for _, sr := range pass1Results {
+		totalUsage.InputTokens += sr.usage.InputTokens
+		totalUsage.OutputTokens += sr.usage.OutputTokens
+		totalUsage.CostUSD += sr.usage.CostUSD
+		totalUsage.DurationMS += sr.usage.DurationMS
+	}
+	for _, sr := range pass2Results {
+		totalUsage.InputTokens += sr.usage.InputTokens
+		totalUsage.OutputTokens += sr.usage.OutputTokens
+		totalUsage.CostUSD += sr.usage.CostUSD
+		totalUsage.DurationMS += sr.usage.DurationMS
+	}
+	log.Info("tokens: %d in / %d out | cost: $%.4f",
+		totalUsage.InputTokens, totalUsage.OutputTokens, totalUsage.CostUSD)
+
 	if len(errs) > 0 {
 		return merged, fmt.Errorf("errors in %d section(s): %s", len(errs), strings.Join(errs, "; "))
 	}
@@ -231,16 +236,16 @@ func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput
 			if !testOnly {
 				pass = "pass 2"
 			}
-			log.Info("%s: starting %q", pass, si.Section.Name)
 
 			var gaps []report.Gap
 			var covered []report.Covered
+			var usage provider.TokenUsage
 			var err error
 
 			if testOnly {
-				gaps, covered, err = runSectionPass1(ctx, p, &si)
+				gaps, covered, usage, err = runSectionPass1(ctx, p, &si)
 			} else {
-				gaps, covered, err = runSectionPass2(ctx, p, &si)
+				gaps, covered, usage, err = runSectionPass2(ctx, p, &si)
 			}
 
 			if err != nil {
@@ -249,6 +254,7 @@ func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput
 			} else {
 				sr.gaps = gaps
 				sr.covered = covered
+				sr.usage = usage
 				log.Info("%s: %q done — %d gaps, %d covered", pass, si.Section.Name, len(gaps), len(covered))
 			}
 			results[idx] = sr
@@ -280,10 +286,10 @@ func uncoveredBehaviors(gaps []report.Gap, covered []report.Covered, allBehavior
 	return uncovered
 }
 
-func runSectionPass1(ctx context.Context, p provider.Provider, input *SectionInput) ([]report.Gap, []report.Covered, error) {
+func runSectionPass1(ctx context.Context, p provider.Provider, input *SectionInput) ([]report.Gap, []report.Covered, provider.TokenUsage, error) {
 	userPrompt, err := buildPass1Prompt(input)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, provider.TokenUsage{}, err
 	}
 
 	req := provider.CompletionRequest{
@@ -293,16 +299,17 @@ func runSectionPass1(ctx context.Context, p provider.Provider, input *SectionInp
 
 	resp, err := p.Complete(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pass 1 check failed: %w", err)
+		return nil, nil, provider.TokenUsage{}, fmt.Errorf("pass 1 check failed: %w", err)
 	}
 
-	return parseSectionResponse(resp.Content)
+	gaps, covered, err := parseSectionResponse(resp.Content)
+	return gaps, covered, resp.Usage, err
 }
 
-func runSectionPass2(ctx context.Context, p provider.Provider, input *SectionInput) ([]report.Gap, []report.Covered, error) {
+func runSectionPass2(ctx context.Context, p provider.Provider, input *SectionInput) ([]report.Gap, []report.Covered, provider.TokenUsage, error) {
 	userPrompt, err := buildPass2Prompt(input)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, provider.TokenUsage{}, err
 	}
 
 	req := provider.CompletionRequest{
@@ -312,10 +319,11 @@ func runSectionPass2(ctx context.Context, p provider.Provider, input *SectionInp
 
 	resp, err := p.Complete(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pass 2 check failed: %w", err)
+		return nil, nil, provider.TokenUsage{}, fmt.Errorf("pass 2 check failed: %w", err)
 	}
 
-	return parseSectionResponse(resp.Content)
+	gaps, covered, err := parseSectionResponse(resp.Content)
+	return gaps, covered, resp.Usage, err
 }
 
 func buildPass1Prompt(input *SectionInput) (string, error) {

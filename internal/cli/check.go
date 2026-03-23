@@ -25,7 +25,6 @@ func newCheckCmd() *cobra.Command {
 		Short: "Check test coverage against a vexspec",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log.Info("loading spec")
 			ps, err := spec.LoadProject(specPath)
 			if err != nil {
 				return err
@@ -84,7 +83,6 @@ func newCheckCmd() *cobra.Command {
 				}
 			}
 
-			log.Info("discovering files")
 			var inputs []check.SectionInput
 			for i := range sections {
 				sec := &sections[i]
@@ -156,7 +154,6 @@ func newCheckCmd() *cobra.Command {
 					continue
 				}
 
-				log.Info("section %q: %d source, %d test files", sec.Name, len(srcMap), len(testMap))
 				inputs = append(inputs, check.SectionInput{
 					Section:     sec,
 					Behaviors:   behaviors,
@@ -169,12 +166,10 @@ func newCheckCmd() *cobra.Command {
 				return emptyReport(ps)
 			}
 
-			log.Info("starting check with %d section(s), concurrency=%d", len(inputs), cfg.MaxConcurrency)
+			log.Info("checking %d section(s)", len(inputs))
 			r, err := check.RunProject(cmd.Context(), p, ps, inputs, cfg.MaxConcurrency)
 			if err != nil {
-				log.Info("check completed with errors: %v", err)
-			} else {
-				log.Info("check complete: %d gaps, %d covered", len(r.Gaps), len(r.Covered))
+				log.Info("check done with errors: %v", err)
 			}
 
 			return outputReport(r)
