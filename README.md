@@ -30,7 +30,7 @@ VEX_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/nickw409/vex/mai
 VEX_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/nickw409/vex/main/install.sh | sh
 ```
 
-**From source** (requires Go 1.22+):
+**From source** (requires Go 1.24+):
 
 ```bash
 go install github.com/nickw409/vex/cmd/vex@latest
@@ -104,8 +104,12 @@ All paths are absolute from the project root. Each behavior describes one observ
 | `vex spec "description"` | Generate spec sections from task description |
 | `vex spec "desc" --extend Name` | Add behaviors to existing section |
 | `vex drift` | Show which sections have changed since last check |
+| `vex lang list` | List built-in and configured languages |
+| `vex lang add name --test-patterns ... --source-patterns ...` | Add a custom language |
+| `vex lang remove name` | Remove a configured language |
 | `vex init` | Create default vex.yaml config |
 | `vex guide` | Print agent instructions for writing specs |
+| `vex version` | Print version, commit, and build date |
 
 ## Output
 
@@ -146,13 +150,21 @@ max_concurrency: 4
 
 ## Supported Languages
 
-Go, TypeScript, JavaScript, Python, Java. Auto-detected by file extensions. Override with config:
+Auto-detected by file extensions. Multi-language projects are fully supported — vex detects all languages present and collects source and test files across all of them.
+
+**Built-in:** Go, TypeScript, JavaScript, Python, Java, Rust, C, C++, C#, Ruby, Kotlin, Swift, PHP, CUDA
+
+Add custom languages via CLI or config:
+
+```bash
+vex lang add mylang --test-patterns "*_test.x" --source-patterns "*.x"
+```
 
 ```yaml
 languages:
-  custom:
-    test_patterns: ["*_test.go"]
-    source_patterns: ["*.go"]
+  mylang:
+    test_patterns: ["*_test.x"]
+    source_patterns: ["*.x"]
 ```
 
 ## License
