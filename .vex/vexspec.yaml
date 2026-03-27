@@ -57,8 +57,8 @@ sections:
       - name: root-config-loading
         description: |
           Root command loads config via PersistentPreRunE. Skips config
-          loading for init, guide, and drift commands. Falls back to
-          defaults if config file not found (no error). Sets global cfg.
+          loading for init, guide, drift, and update commands. Falls back
+          to defaults if config file not found (no error). Sets global cfg.
       - name: root-config-flag
         description: |
           --config flag specifies explicit path to vex.yaml.
@@ -158,6 +158,34 @@ sections:
               guidelines, output file locations (.vex/report.json,
               .vex/validation.json), example workflow, and command
               reference.
+          - name: guide-formula-guidance
+            description: |
+              Guide includes a "Formulas and Equations" section that
+              instructs agents to include formulas directly in behavior
+              descriptions. Provides examples (GBM, Black-Scholes)
+              showing how to write formula-bearing behaviors with the
+              formula itself and expected test verification criteria.
+
+      - name: Update
+        file: internal/cli/update.go
+        behaviors:
+          - name: update-version-check
+            description: |
+              Fetches latest release tag from GitHub API. If current
+              version matches latest, logs "already up to date" and
+              returns without error.
+          - name: update-via-go
+            description: |
+              When the binary was installed via go install (no ldflags),
+              runs go install github.com/nickw409/vex/cmd/vex@{tag}
+              to update through the Go toolchain.
+          - name: update-via-binary
+            description: |
+              When the binary was built with ldflags (prebuilt release),
+              downloads the correct tarball for the current OS/arch from
+              GitHub Releases, extracts the vex binary from the tar.gz,
+              and atomically replaces the running binary via temp file
+              and rename.
 
       - name: Output
         file: internal/cli/output.go
@@ -215,6 +243,12 @@ sections:
               behavior_name, description, and relation (new or
               extends existing). Only suggests conspicuously absent
               behaviors within each section's scope.
+          - name: validate-formula-tolerance
+            description: |
+              Validation prompt explicitly states that mathematical
+              formulas and equations are valid behaviors defining a
+              correctness contract. The LLM must not flag formula-
+              bearing behaviors as non-behavioral entries for removal.
 
       - name: Generation
         file: internal/spec/generate.go
@@ -231,6 +265,14 @@ sections:
               Takes task description and existing section, calls LLM
               to generate only new behaviors/subsections that don't
               duplicate existing ones. Returns ExtendResult.
+          - name: generate-formula-support
+            description: |
+              Both generate and extend prompts accept mathematical
+              formulas and equations as valid behaviors. When a task
+              involves a formula or numerical method, the LLM is
+              instructed to include the formula directly in the
+              behavior description so test coverage can be verified
+              against the mathematical definition.
 
   - name: Provider
     path: internal/provider
@@ -306,6 +348,16 @@ sections:
           and files. Enforces 400K char limit on total content.
           Returns error if exceeded, suggesting --diff or narrower
           path.
+      - name: check-formula-awareness
+        description: |
+          When a behavior description contains a mathematical formula,
+          equation, or numerical method, both pass 1 and pass 2 prompts
+          instruct the LLM to verify that tests assert mathematical
+          correctness — known inputs with expected outputs, boundary
+          conditions, or convergence/statistical properties. A formula-
+          bearing behavior is only marked covered when tests would catch
+          an incorrect implementation of that formula, not merely when
+          the function is called or runs without error.
       - name: check-response-parsing
         description: |
           Parses LLM JSON response, extracting JSON even when the
@@ -337,18 +389,24 @@ sections:
     behaviors:
       - name: lang-detect
         description: |
-          Walks directory counting file extensions. Returns most
-          common supported language from built-in set (Go, TypeScript,
-          JavaScript, Python, Java). JavaScript files are only
-          counted if package.json exists in the directory. Skips
-          node_modules, vendor, .git directories. If config overrides
-          provided, returns first override language. Returns error
-          if no supported language detected.
+          Detect returns the single most common language by file count.
+          DetectAll returns all detected languages sorted by file count.
+          Built-in set: Go, TypeScript, JavaScript, Python, Java, Rust,
+          C, C++, C#, Ruby, Kotlin, Swift, PHP, CUDA. JavaScript files
+          are only counted if package.json exists. Skips node_modules,
+          vendor, .git directories. Config overrides replace builtins
+          with the same name. Returns error if no language detected.
       - name: lang-find-files
         description: |
-          Walks directory tree separating files into source and
-          test lists by language patterns. Skips node_modules,
-          vendor, .git directories.
+          FindFiles walks a directory for a single language. FindFilesMulti
+          walks once for multiple languages, classifying each file as
+          source or test across all language patterns. Test classification
+          takes priority. Deduplicates files. Skips node_modules, vendor,
+          .git directories.
+      - name: lang-is-test-file
+        description: |
+          IsTestFile checks a filename against one language's test patterns.
+          IsTestFileMulti checks against all languages' test patterns.
 
   - name: Drift
     path: [internal/diff, internal/cli]
@@ -393,5 +451,6 @@ sections:
           error if directory is not inside a git repository.
       - name: diff-filter-by-language
         description: |
-          Separates file list into source and test files by
-          matching against language glob patterns.
+          Separates file list into source and test files by matching
+          against language glob patterns. Accepts multiple languages
+          and checks patterns across all of them.
