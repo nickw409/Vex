@@ -29,7 +29,27 @@ func TestJSON(t *testing.T) {
 		t.Errorf("expected 2-space indentation, got:\n%s", raw)
 	}
 
-	var parsed Report
+	// Covered should be a flat list of behavior names, not detailed objects
+	if !strings.Contains(raw, `"covered": [`) {
+		t.Errorf("expected covered as array, got:\n%s", raw)
+	}
+	if strings.Contains(raw, `"test_file"`) {
+		t.Errorf("detailed covered entries should not appear in JSON output")
+	}
+
+	// Summary should appear before gaps in the output
+	summaryIdx := strings.Index(raw, `"summary"`)
+	gapsIdx := strings.Index(raw, `"gaps"`)
+	if summaryIdx < 0 || gapsIdx < 0 || summaryIdx > gapsIdx {
+		t.Errorf("expected summary before gaps in JSON output")
+	}
+
+	var parsed struct {
+		Spec    string   `json:"spec"`
+		Summary Summary  `json:"summary"`
+		Gaps    []Gap    `json:"gaps"`
+		Covered []string `json:"covered"`
+	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +59,9 @@ func TestJSON(t *testing.T) {
 	}
 	if len(parsed.Gaps) != 1 {
 		t.Errorf("expected 1 gap, got %d", len(parsed.Gaps))
+	}
+	if len(parsed.Covered) != 1 || parsed.Covered[0] != "login" {
+		t.Errorf("expected covered [login], got %v", parsed.Covered)
 	}
 }
 
@@ -66,9 +89,6 @@ func TestComputeSummary(t *testing.T) {
 	}
 	r.ComputeSummary(3)
 
-	if r.BehaviorsChecked != 3 {
-		t.Errorf("expected BehaviorsChecked 3, got %d", r.BehaviorsChecked)
-	}
 	if r.Summary.TotalBehaviors != 3 {
 		t.Errorf("expected 3 total, got %d", r.Summary.TotalBehaviors)
 	}
@@ -77,5 +97,12 @@ func TestComputeSummary(t *testing.T) {
 	}
 	if r.Summary.GapsFound != 1 {
 		t.Errorf("expected 1 gap, got %d", r.Summary.GapsFound)
+	}
+	// CoveredBehaviors should be sorted and deduplicated
+	if len(r.CoveredBehaviors) != 2 {
+		t.Errorf("expected 2 covered behaviors, got %d", len(r.CoveredBehaviors))
+	}
+	if r.CoveredBehaviors[0] != "login" || r.CoveredBehaviors[1] != "refresh" {
+		t.Errorf("expected [login refresh], got %v", r.CoveredBehaviors)
 	}
 }

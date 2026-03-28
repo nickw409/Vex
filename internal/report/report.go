@@ -1,13 +1,22 @@
 package report
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+)
 
+// Report is the final output of a vex check. It is designed to be short and
+// actionable: summary first, then gaps (the items the agent must fix), then
+// a flat list of covered behavior names for context.
 type Report struct {
-	Spec             string    `json:"spec"`
-	BehaviorsChecked int       `json:"behaviors_checked"`
-	Gaps             []Gap     `json:"gaps"`
-	Covered          []Covered `json:"covered"`
-	Summary          Summary   `json:"summary"`
+	Spec             string   `json:"spec"`
+	Summary          Summary  `json:"summary"`
+	Gaps             []Gap    `json:"gaps"`
+	CoveredBehaviors []string `json:"covered"`
+
+	// Covered holds detailed coverage entries used internally during the
+	// two-pass check. It is excluded from JSON output to keep reports small.
+	Covered []Covered `json:"-"`
 }
 
 type Gap struct {
@@ -55,7 +64,14 @@ func (r *Report) ComputeSummary(totalBehaviors int) {
 		}
 	}
 
-	r.BehaviorsChecked = totalBehaviors
+	// Build the deduplicated, sorted list of covered behavior names.
+	names := make([]string, 0, len(covered))
+	for name := range covered {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	r.CoveredBehaviors = names
+
 	r.Summary = Summary{
 		TotalBehaviors: totalBehaviors,
 		FullyCovered:   fullyCovered,

@@ -115,8 +115,8 @@ func TestRunProjectBasic(t *testing.T) {
 		t.Errorf("expected 2 gaps (1 per section from pass 2), got %d", len(rpt.Gaps))
 	}
 
-	if rpt.BehaviorsChecked != 2 {
-		t.Errorf("expected BehaviorsChecked=2, got %d", rpt.BehaviorsChecked)
+	if rpt.Summary.TotalBehaviors != 2 {
+		t.Errorf("expected TotalBehaviors=2, got %d", rpt.Summary.TotalBehaviors)
 	}
 }
 
@@ -165,8 +165,8 @@ func TestRunProjectMaxConcurrencyDefaultsTo4(t *testing.T) {
 	if calls != 6 {
 		t.Errorf("expected 6 calls, got %d", calls)
 	}
-	if rpt.BehaviorsChecked != 6 {
-		t.Errorf("expected 6 behaviors checked, got %d", rpt.BehaviorsChecked)
+	if rpt.Summary.TotalBehaviors != 6 {
+		t.Errorf("expected 6 behaviors checked, got %d", rpt.Summary.TotalBehaviors)
 	}
 }
 
