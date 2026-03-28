@@ -523,10 +523,44 @@ func extractJSON(s string) string {
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	s = strings.TrimSpace(s)
-	if start := strings.Index(s, "{"); start >= 0 {
-		if end := strings.LastIndex(s, "}"); end >= start {
-			return s[start : end+1]
+
+	start := strings.Index(s, "{")
+	if start < 0 {
+		return s
+	}
+
+	// Track brace depth to find the matching close brace, skipping
+	// braces inside JSON strings to handle keys/values containing '{}'.
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if c == '{' {
+			depth++
+		} else if c == '}' {
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
 		}
 	}
-	return s
+
+	// Fallback: unbalanced braces, return from first { to end
+	return s[start:]
 }

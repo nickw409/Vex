@@ -363,6 +363,53 @@ func TestParseSectionResponsePreambleBeforeJSON(t *testing.T) {
 	}
 }
 
+func TestParseSectionResponseProseAfterJSON(t *testing.T) {
+	// Simulates the real failure: LLM returns valid JSON then starts writing prose
+	// containing braces like {n} which confused the old extractJSON.
+	content := `{"gaps": [{"behavior": "usage-logging", "detail": "not tested", "suggestion": "add test"}], "covered": []}
+
+The logging is at line 319: log.Info("tokens: %d in / {n} out | cost: ${n}")
+Let me re-check the exact format.`
+
+	gaps, covered, err := parseSectionResponse(content)
+	if err != nil {
+		t.Fatalf("should extract JSON despite trailing prose with braces: %v", err)
+	}
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(gaps))
+	}
+	if len(covered) != 0 {
+		t.Errorf("expected 0 covered, got %d", len(covered))
+	}
+}
+
+func TestExtractJSONBracesInStrings(t *testing.T) {
+	// Braces inside JSON string values should not affect depth tracking
+	content := `{"gaps": [{"behavior": "test", "detail": "format is {key}: {value}", "suggestion": "add"}], "covered": []}`
+	gaps, _, err := parseSectionResponse(content)
+	if err != nil {
+		t.Fatalf("should handle braces in string values: %v", err)
+	}
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(gaps))
+	}
+	if gaps[0].Detail != "format is {key}: {value}" {
+		t.Errorf("detail should preserve braces in strings, got %q", gaps[0].Detail)
+	}
+}
+
+func TestExtractJSONNestedObjects(t *testing.T) {
+	// extractJSON should handle nested objects correctly (not stop at first })
+	content := `preamble {"gaps": [{"behavior": "x", "detail": "d", "suggestion": "s"}], "covered": []} trailing`
+	gaps, _, err := parseSectionResponse(content)
+	if err != nil {
+		t.Fatalf("should handle nested objects: %v", err)
+	}
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(gaps))
+	}
+}
+
 func TestCheckSystemPromptContainsUnspecified(t *testing.T) {
 	if !strings.Contains(pass2SystemPrompt, "UNSPECIFIED") {
 		t.Error("pass2SystemPrompt should contain 'UNSPECIFIED' instruction")
