@@ -97,7 +97,7 @@ func TestRunProjectBasic(t *testing.T) {
 	inputs := []SectionInput{makeInput("sec1"), makeInput("sec2")}
 	ps := &spec.ProjectSpec{}
 
-	rpt, err := RunProject(context.Background(), mp, ps, inputs, 2)
+	rpt, err := RunProject(context.Background(), mp, ps, inputs, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestRunProjectSkipsPass2WhenCovered(t *testing.T) {
 	inputs := []SectionInput{makeInput("sec1"), makeInput("sec2")}
 	ps := &spec.ProjectSpec{}
 
-	rpt, err := RunProject(context.Background(), mp, ps, inputs, 2)
+	rpt, err := RunProject(context.Background(), mp, ps, inputs, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRunProjectMaxConcurrencyDefaultsTo4(t *testing.T) {
 		inputs = append(inputs, makeInput(fmt.Sprintf("s%d", i)))
 	}
 
-	rpt, err := RunProject(context.Background(), mp, &spec.ProjectSpec{}, inputs, 0)
+	rpt, err := RunProject(context.Background(), mp, &spec.ProjectSpec{}, inputs, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestRunProjectBoundedConcurrency(t *testing.T) {
 		inputs = append(inputs, makeInput(fmt.Sprintf("s%d", i)))
 	}
 
-	_, err := RunProject(context.Background(), mp, &spec.ProjectSpec{}, inputs, 2)
+	_, err := RunProject(context.Background(), mp, &spec.ProjectSpec{}, inputs, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestRunProjectPartialError(t *testing.T) {
 		makeInput("fail"),
 	}
 
-	rpt, err := RunProject(context.Background(), failProvider, &spec.ProjectSpec{}, inputs, 4)
+	rpt, err := RunProject(context.Background(), failProvider, &spec.ProjectSpec{}, inputs, 4, nil)
 	if err == nil {
 		t.Fatal("expected error when a section fails")
 	}

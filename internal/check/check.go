@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/nickw409/vex/internal/log"
+	"github.com/nickw409/vex/internal/perf"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/report"
 	"github.com/nickw409/vex/internal/spec"
@@ -107,7 +108,8 @@ type sectionResult struct {
 
 // RunProject checks all sections using a two-pass strategy with bounded concurrency.
 // Pass 1: test files + behaviors only (cheap). Pass 2: source + tests for uncovered behaviors only.
-func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int) (*report.Report, error) {
+// If prof is non-nil, timing spans are recorded for each phase.
+func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int, prof *perf.Profile) (*report.Report, error) {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 4
 	}
@@ -116,7 +118,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	log.Info("pass 1: analyzing %d section(s)", len(inputs))
 
 	pass1Results := make([]sectionResult, len(inputs))
-	runParallel(ctx, p, inputs, pass1Results, maxConcurrency, true)
+	runParallel(ctx, p, inputs, pass1Results, maxConcurrency, true, prof)
 
 	// Determine which sections need pass 2
 	var pass2Inputs []SectionInput
@@ -142,7 +144,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	pass2Results := make([]sectionResult, len(pass2Inputs))
 	if len(pass2Inputs) > 0 {
 		log.Info("pass 2: analyzing %d section(s)", len(pass2Inputs))
-		runParallel(ctx, p, pass2Inputs, pass2Results, maxConcurrency, false)
+		runParallel(ctx, p, pass2Inputs, pass2Results, maxConcurrency, false, prof)
 	}
 
 	// Merge results
@@ -219,7 +221,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	return merged, nil
 }
 
-func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput, results []sectionResult, maxConcurrency int, testOnly bool) {
+func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput, results []sectionResult, maxConcurrency int, testOnly bool, prof *perf.Profile) {
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
 
@@ -242,10 +244,19 @@ func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput
 			var usage provider.TokenUsage
 			var err error
 
+			var end func()
+			if prof != nil {
+				end = prof.Start(pass+":llm", si.Section.Name)
+			}
+
 			if testOnly {
 				gaps, covered, usage, err = runSectionPass1(ctx, p, &si)
 			} else {
 				gaps, covered, usage, err = runSectionPass2(ctx, p, &si)
+			}
+
+			if end != nil {
+				end()
 			}
 
 			if err != nil {
