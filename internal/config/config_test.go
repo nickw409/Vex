@@ -14,8 +14,8 @@ func TestDefault(t *testing.T) {
 	if cfg.Model != "opus" {
 		t.Errorf("expected model opus, got %s", cfg.Model)
 	}
-	if cfg.MaxConcurrency != 4 {
-		t.Errorf("expected max_concurrency 4, got %d", cfg.MaxConcurrency)
+	if cfg.MaxConcurrency != 5 {
+		t.Errorf("expected max_concurrency 5, got %d", cfg.MaxConcurrency)
 	}
 	if cfg.APIKeyEnv != "" {
 		t.Errorf("expected empty api_key_env, got %s", cfg.APIKeyEnv)
@@ -82,8 +82,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Model != "opus" {
 		t.Errorf("expected default model opus, got %s", cfg.Model)
 	}
-	if cfg.MaxConcurrency != 4 {
-		t.Errorf("expected default max_concurrency 4, got %d", cfg.MaxConcurrency)
+	if cfg.MaxConcurrency != 5 {
+		t.Errorf("expected default max_concurrency 5, got %d", cfg.MaxConcurrency)
 	}
 }
 
@@ -206,8 +206,8 @@ func TestLoadPartialConfigPreservesExplicitValues(t *testing.T) {
 	if cfg.Provider != "claude-cli" {
 		t.Errorf("expected default provider claude-cli, got %s", cfg.Provider)
 	}
-	if cfg.MaxConcurrency != 4 {
-		t.Errorf("expected default max_concurrency 4, got %d", cfg.MaxConcurrency)
+	if cfg.MaxConcurrency != 5 {
+		t.Errorf("expected default max_concurrency 5, got %d", cfg.MaxConcurrency)
 	}
 }
 

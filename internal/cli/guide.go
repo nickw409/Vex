@@ -201,21 +201,49 @@ incomplete ones. "remove: not a behavior" flags non-behavioral entries.
 - 1: gaps or suggestions found
 - 2: fatal error (file not found, invalid config)
 
+## Section Sizing
+
+Keep sections under 10 behaviors. Large sections are slower because
+they produce bigger prompts and longer LLM response times, and they
+cannot be parallelized internally. If a section grows past 10 behaviors,
+split it into smaller sections or use subsections.
+
+Sections are checked concurrently — more smaller sections means better
+parallelism and faster total check time.
+
 ## Workflow
+
+### First time (spec authoring)
 
 1. Receive task description
 2. Run: vex spec "description"
 3. Review .vex/vexspec.yaml — edit if needed
 4. Run: vex validate — read .vex/validation.json
-5. Address suggestions, repeat step 4 until complete
+5. Address suggestions, repeat step 4 until complete: true
+
+### Implementation loop
+
 6. Implement code and tests
-7. Run: vex check — read .vex/report.json
+7. Run: vex check --drift — read .vex/report.json
 8. For each gap: write the missing test
 9. Repeat steps 7-8 until exit code 0
 
-On subsequent changes, use drift to skip unchanged sections:
+--drift skips sections whose files haven't changed since the last check,
+saving time and LLM calls. Use "vex check" (without --drift) after editing
+the spec without changing code, since drift only tracks file changes.
 
-  vex check --drift
+### Ongoing development
+
+Use validate regularly as you evolve the spec:
+
+  vex validate        # ensure spec is complete
+  # fix any suggestions
+  vex validate        # confirm complete: true
+
+Then check when tests are ready:
+
+  vex check --drift   # skip unchanged sections (recommended)
+  vex check           # full re-check (use after spec-only edits)
 
 ## Adding to an Existing Spec
 

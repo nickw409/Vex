@@ -26,7 +26,7 @@ sections:
       - name: config-defaults
         description: |
           Default config uses provider "claude-cli", model "opus",
-          max_concurrency 4. No api_key_env or language overrides.
+          max_concurrency 5. No api_key_env or language overrides.
           max_concurrency controls how many LLM calls run in parallel
           during vex check when processing multiple sections.
       - name: config-load
@@ -95,6 +95,13 @@ sections:
               Calls check.RunProject with gathered files and provider.
               On check error, prints to stderr but still outputs
               whatever report was generated.
+          - name: check-profile-mode
+            description: |
+              When --profile flag is passed, creates a perf.Profile that
+              instruments all phases: spec loading, drift detection, file
+              discovery, file reading, and LLM calls. After check completes,
+              prints human-readable timing summary to stderr and writes
+              machine-readable JSON to .vex/profile.json.
           - name: check-drift-mode
             description: |
               When --drift flag is passed, uses drift detection to
@@ -165,6 +172,18 @@ sections:
               descriptions. Provides examples (GBM, Black-Scholes)
               showing how to write formula-bearing behaviors with the
               formula itself and expected test verification criteria.
+          - name: guide-section-sizing
+            description: |
+              Guide includes a "Section Sizing" section advising to keep
+              sections under 10 behaviors. Explains that large sections
+              produce bigger prompts and longer LLM times, and that more
+              smaller sections enables better parallelism.
+          - name: guide-workflow
+            description: |
+              Guide workflow is structured into three phases: first-time
+              spec authoring (spec, validate, fix loop), implementation
+              loop (check, fix gaps, repeat), and ongoing development
+              (validate regularly, then check or check --drift).
 
       - name: Update
         file: internal/cli/update.go
@@ -286,6 +305,13 @@ sections:
             description: |
               New() creates provider from config. Currently only
               supports "claude-cli". Returns error on unknown provider.
+          - name: provider-retryable-errors
+            description: |
+              IsRetryable classifies errors as transient (rate limit or
+              overload) vs permanent. Matches on "rate_limit", "rate limit",
+              "overloaded", "429", and "529" in the error message. Returns
+              false for nil errors and permanent failures (parse errors,
+              not-found, auth).
 
       - name: Claude CLI
         file: internal/provider/claude_cli.go
@@ -313,10 +339,11 @@ sections:
     behaviors:
       - name: check-run-project
         description: |
-          RunProject runs LLM calls for each section in parallel,
-          bounded by max_concurrency from config (default 4). Merges
-          results into single report with computed summary. If
-          max_concurrency is <= 0, defaults to 4.
+          RunProject runs LLM calls for each section using a pipelined
+          task queue with adaptive concurrency, bounded by max_concurrency
+          from config (default 5). Merges results into single report with
+          computed summary. If max_concurrency is <= 0, defaults to 5.
+          Accepts optional perf.Profile for timing instrumentation.
       - name: check-two-pass
         description: |
           Uses a two-pass strategy to minimize cost. First pass sends
@@ -327,6 +354,27 @@ sections:
           behaviors are covered in the first pass, the second pass is
           skipped entirely. Well-tested codebases converge to first-
           pass-only cost over successive runs.
+      - name: check-pipelining
+        description: |
+          Pass 1 results flow directly into pass 2 as each section
+          completes, rather than waiting for all of pass 1 to finish.
+          When a section's pass 1 finds uncovered behaviors, its pass 2
+          task is immediately enqueued and can begin as soon as a
+          concurrency slot opens. This reduces wall-clock time when
+          sections have different prompt sizes.
+      - name: check-adaptive-concurrency
+        description: |
+          On retryable errors (rate limits, overload), reduces concurrency
+          by 1 (floor 1) and requeues the failed section for retry (max 2
+          retries per section). On each successful LLM call, increases
+          concurrency by 1 (capped at max_concurrency). This self-tunes
+          throughput based on actual provider pressure from competing agents.
+      - name: check-retry
+        description: |
+          Failed LLM calls are classified via provider.IsRetryable. Retryable
+          errors are requeued up to 2 times. Permanent errors (parse failure,
+          auth, not-found) fail immediately with no retry. If retries are
+          exhausted, the section is reported as an error in the final report.
       - name: check-unspecified-detection
         description: |
           When source code contains significant observable behavior
@@ -365,6 +413,23 @@ sections:
           empty slices (not nil) for gaps and covered if LLM
           returns none. Each gap has behavior, detail, suggestion.
           Each covered has behavior, detail, test_file, test_name.
+
+  - name: Performance Profiling
+    path: internal/perf
+    description: |
+      Lightweight timing instrumentation for profiling vex check phases.
+    behaviors:
+      - name: perf-profile
+        description: |
+          Profile collects timing spans concurrently. Start begins a named
+          span with an optional parent (e.g. section name) and returns a
+          stop function. Duration is recorded in milliseconds. Safe for
+          concurrent use from multiple goroutines.
+      - name: perf-output
+        description: |
+          Print writes a human-readable summary to stderr grouped by parent.
+          WriteFile writes all spans as indented JSON to the given path.
+          Spans returns a copy of all collected spans.
 
   - name: Report
     path: internal/report

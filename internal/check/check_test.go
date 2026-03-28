@@ -146,9 +146,9 @@ func TestRunProjectSkipsPass2WhenCovered(t *testing.T) {
 	}
 }
 
-func TestRunProjectMaxConcurrencyDefaultsTo4(t *testing.T) {
+func TestRunProjectMaxConcurrencyDefaultsTo5(t *testing.T) {
 	mp := &coveredMockProvider{}
-	// Create 6 inputs; concurrency 0 should default to 4 and still complete
+	// Create 6 inputs; concurrency 0 should default to 5 and still complete
 	var inputs []SectionInput
 	for i := 0; i < 6; i++ {
 		inputs = append(inputs, makeInput(fmt.Sprintf("s%d", i)))
@@ -499,6 +499,71 @@ func TestBuildPass1PromptTooLarge(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "--diff") {
 		t.Errorf("error message should contain '--diff', got: %s", err.Error())
+	}
+}
+
+// rateLimitProvider fails with a rate limit error for the first N calls, then succeeds.
+type rateLimitProvider struct {
+	mu           sync.Mutex
+	failCount    int // number of calls that should fail
+	calls        int
+	successResp  string
+}
+
+func (p *rateLimitProvider) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.mu.Unlock()
+
+	time.Sleep(5 * time.Millisecond)
+
+	if n <= p.failCount {
+		return provider.CompletionResponse{}, fmt.Errorf("claude cli failed: 429 rate_limit_error")
+	}
+	return provider.CompletionResponse{Content: p.successResp}, nil
+}
+
+func TestRunProjectRetriesOnRateLimit(t *testing.T) {
+	coveredResp := `{"gaps": [], "covered": [{"behavior": "s0-b1", "detail": "ok", "test_file": "t.go", "test_name": "T"}]}`
+	rp := &rateLimitProvider{failCount: 1, successResp: coveredResp}
+
+	inputs := []SectionInput{makeInput("s0")}
+	rpt, err := RunProject(context.Background(), rp, &spec.ProjectSpec{}, inputs, 2, nil)
+	if err != nil {
+		t.Fatalf("expected success after retry, got: %v", err)
+	}
+
+	rp.mu.Lock()
+	calls := rp.calls
+	rp.mu.Unlock()
+
+	// First call fails (rate limit), second succeeds
+	if calls != 2 {
+		t.Errorf("expected 2 calls (1 fail + 1 retry), got %d", calls)
+	}
+	if len(rpt.Covered) != 1 {
+		t.Errorf("expected 1 covered after retry, got %d", len(rpt.Covered))
+	}
+}
+
+func TestRunProjectExhaustsRetries(t *testing.T) {
+	// All calls fail with rate limit — should exhaust retries and report error
+	rp := &rateLimitProvider{failCount: 100, successResp: ""}
+
+	inputs := []SectionInput{makeInput("s0")}
+	_, err := RunProject(context.Background(), rp, &spec.ProjectSpec{}, inputs, 1, nil)
+	if err == nil {
+		t.Fatal("expected error when retries exhausted")
+	}
+
+	rp.mu.Lock()
+	calls := rp.calls
+	rp.mu.Unlock()
+
+	// 1 initial + 2 retries = 3 total
+	if calls != 3 {
+		t.Errorf("expected 3 calls (1 + 2 retries), got %d", calls)
 	}
 }
 

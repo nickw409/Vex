@@ -25,6 +25,8 @@ func TestGuideOutput(t *testing.T) {
 		"vexspec",
 		"behaviors",
 		"Workflow",
+		"Section Sizing",
+		"under 10 behaviors",
 		".vex/report.json",
 		".vex/validation.json",
 		"vex validate",

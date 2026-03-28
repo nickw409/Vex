@@ -25,7 +25,7 @@ func Default() *Config {
 	return &Config{
 		Provider:       "claude-cli",
 		Model:          "opus",
-		MaxConcurrency: 4,
+		MaxConcurrency: 5,
 	}
 }
 
@@ -55,7 +55,7 @@ func Load(path string) (*Config, error) {
 		cfg.Model = "opus"
 	}
 	if cfg.MaxConcurrency <= 0 {
-		cfg.MaxConcurrency = 4
+		cfg.MaxConcurrency = 5
 	}
 
 	return &cfg, nil

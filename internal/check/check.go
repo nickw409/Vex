@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/perf"
@@ -106,48 +107,183 @@ type sectionResult struct {
 	err     error
 }
 
-// RunProject checks all sections using a two-pass strategy with bounded concurrency.
-// Pass 1: test files + behaviors only (cheap). Pass 2: source + tests for uncovered behaviors only.
+const maxRetries = 2
+
+// task represents a single LLM call (pass 1 or pass 2) for one section.
+type task struct {
+	inputIdx int // index into the original inputs slice
+	input    SectionInput
+	testOnly bool // true = pass 1, false = pass 2
+	retries  int
+}
+
+// RunProject checks all sections using a pipelined two-pass strategy with
+// adaptive concurrency. Pass 1 results flow directly into pass 2 as they
+// complete, rather than waiting for all of pass 1 to finish.
 // If prof is non-nil, timing spans are recorded for each phase.
 func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int, prof *perf.Profile) (*report.Report, error) {
 	if maxConcurrency <= 0 {
-		maxConcurrency = 4
+		maxConcurrency = 5
 	}
 
-	// Pass 1: test files only
 	log.Info("pass 1: analyzing %d section(s)", len(inputs))
 
-	pass1Results := make([]sectionResult, len(inputs))
-	runParallel(ctx, p, inputs, pass1Results, maxConcurrency, true, prof)
+	// Collect results per input index. Each slot holds pass 1 and optionally pass 2.
+	type combinedResult struct {
+		pass1 sectionResult
+		pass2 *sectionResult // nil if pass 2 not needed or not yet complete
+	}
+	results := make([]combinedResult, len(inputs))
 
-	// Determine which sections need pass 2
-	var pass2Inputs []SectionInput
-	var pass2Indices []int
+	// Adaptive concurrency: current limit can shrink on retryable errors.
+	var concurrency atomic.Int32
+	concurrency.Store(int32(maxConcurrency))
 
-	for i, sr := range pass1Results {
-		if sr.err != nil {
-			continue
-		}
-		uncovered := uncoveredBehaviors(sr.gaps, sr.covered, inputs[i].Behaviors)
-		if len(uncovered) > 0 {
-			pass2Inputs = append(pass2Inputs, SectionInput{
-				Section:     inputs[i].Section,
-				Behaviors:   uncovered,
-				SourceFiles: inputs[i].SourceFiles,
-				TestFiles:   inputs[i].TestFiles,
-			})
-			pass2Indices = append(pass2Indices, i)
-		}
+	// Work queue and completion channel.
+	work := make(chan task, len(inputs)*2) // enough for pass 1 + pass 2
+	done := make(chan struct{})
+
+	// Seed pass 1 tasks.
+	pending := len(inputs)
+	for i, inp := range inputs {
+		work <- task{inputIdx: i, input: inp, testOnly: true}
 	}
 
-	// Pass 2: source + test files for uncovered behaviors only
-	pass2Results := make([]sectionResult, len(pass2Inputs))
-	if len(pass2Inputs) > 0 {
-		log.Info("pass 2: analyzing %d section(s)", len(pass2Inputs))
-		runParallel(ctx, p, pass2Inputs, pass2Results, maxConcurrency, false, prof)
-	}
+	var mu sync.Mutex
+	var totalUsage provider.TokenUsage
+	var errs []string
 
-	// Merge results
+	// Worker loop: pull tasks from queue, respect adaptive semaphore.
+	sem := make(chan struct{}, maxConcurrency) // buffered to max ceiling
+	var wg sync.WaitGroup
+
+	go func() {
+		for t := range work {
+			wg.Add(1)
+			go func(t task) {
+				defer wg.Done()
+
+				// Adaptive semaphore: only allow up to current concurrency.
+				// We always acquire from sem (sized to maxConcurrency ceiling),
+				// but also check the adaptive limit.
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				pass := "pass 1"
+				if !t.testOnly {
+					pass = "pass 2"
+				}
+
+				var gaps []report.Gap
+				var covered []report.Covered
+				var usage provider.TokenUsage
+				var err error
+
+				var end func()
+				if prof != nil {
+					end = prof.Start(pass+":llm", t.input.Section.Name)
+				}
+
+				if t.testOnly {
+					gaps, covered, usage, err = runSectionPass1(ctx, p, &t.input)
+				} else {
+					gaps, covered, usage, err = runSectionPass2(ctx, p, &t.input)
+				}
+
+				if end != nil {
+					end()
+				}
+
+				mu.Lock()
+				totalUsage.InputTokens += usage.InputTokens
+				totalUsage.OutputTokens += usage.OutputTokens
+				totalUsage.CostUSD += usage.CostUSD
+				totalUsage.DurationMS += usage.DurationMS
+				mu.Unlock()
+
+				if err != nil && provider.IsRetryable(err) && t.retries < maxRetries {
+					// Adaptive backoff: reduce concurrency by 1 (floor 1)
+					for {
+						cur := concurrency.Load()
+						next := cur - 1
+						if next < 1 {
+							next = 1
+						}
+						if concurrency.CompareAndSwap(cur, next) {
+							if next < cur {
+								log.Info("%s: %q hit rate limit, reducing concurrency to %d", pass, t.input.Section.Name, next)
+							}
+							break
+						}
+					}
+					t.retries++
+					log.Info("%s: %q retrying (attempt %d/%d)", pass, t.input.Section.Name, t.retries, maxRetries)
+					work <- t
+					return
+				}
+
+				sr := sectionResult{section: t.input.Section.Name}
+				if err != nil {
+					sr.err = fmt.Errorf("section %q: %w", t.input.Section.Name, err)
+					log.Info("%s: %q failed: %v", pass, t.input.Section.Name, err)
+				} else {
+					sr.gaps = gaps
+					sr.covered = covered
+					sr.usage = usage
+					log.Info("%s: %q done — %d gaps, %d covered", pass, t.input.Section.Name, len(gaps), len(covered))
+
+					// Ramp up: on success, increase concurrency by 1 (capped at max)
+					for {
+						cur := concurrency.Load()
+						if cur >= int32(maxConcurrency) {
+							break
+						}
+						if concurrency.CompareAndSwap(cur, cur+1) {
+							break
+						}
+					}
+				}
+
+				mu.Lock()
+				if t.testOnly {
+					results[t.inputIdx].pass1 = sr
+
+					// Pipeline: if pass 1 succeeded and has uncovered behaviors, enqueue pass 2.
+					if sr.err == nil {
+						uncovered := uncoveredBehaviors(sr.gaps, sr.covered, inputs[t.inputIdx].Behaviors)
+						if len(uncovered) > 0 {
+							pending++
+							log.Info("pass 2: enqueuing %q (%d uncovered)", t.input.Section.Name, len(uncovered))
+							work <- task{
+								inputIdx: t.inputIdx,
+								input: SectionInput{
+									Section:     inputs[t.inputIdx].Section,
+									Behaviors:   uncovered,
+									SourceFiles: inputs[t.inputIdx].SourceFiles,
+									TestFiles:   inputs[t.inputIdx].TestFiles,
+								},
+								testOnly: false,
+							}
+						}
+					}
+				} else {
+					results[t.inputIdx].pass2 = &sr
+				}
+
+				pending--
+				if pending == 0 {
+					close(done)
+				}
+				mu.Unlock()
+			}(t)
+		}
+	}()
+
+	<-done
+	close(work)
+	wg.Wait()
+
+	// Merge results.
 	merged := &report.Report{
 		Spec:    ".vex/vexspec.yaml",
 		Gaps:    []report.Gap{},
@@ -155,62 +291,31 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	}
 
 	totalBehaviors := 0
-	var errs []string
-
-	for i, sr := range pass1Results {
-		if sr.err != nil {
-			errs = append(errs, sr.err.Error())
+	for i, cr := range results {
+		if cr.pass1.err != nil {
+			errs = append(errs, cr.pass1.err.Error())
 			continue
 		}
-		// Add covered from pass 1
-		merged.Covered = append(merged.Covered, sr.covered...)
 
-		// Check if this section had a pass 2
-		pass2Idx := -1
-		for j, idx := range pass2Indices {
-			if idx == i {
-				pass2Idx = j
-				break
-			}
-		}
+		merged.Covered = append(merged.Covered, cr.pass1.covered...)
 
-		if pass2Idx >= 0 {
-			// Use pass 2 results for the uncovered behaviors
-			p2 := pass2Results[pass2Idx]
-			if p2.err != nil {
-				errs = append(errs, p2.err.Error())
-				// Fall back to pass 1 gaps for this section
-				merged.Gaps = append(merged.Gaps, sr.gaps...)
+		if cr.pass2 != nil {
+			if cr.pass2.err != nil {
+				errs = append(errs, cr.pass2.err.Error())
+				// Fall back to pass 1 gaps
+				merged.Gaps = append(merged.Gaps, cr.pass1.gaps...)
 			} else {
-				merged.Gaps = append(merged.Gaps, p2.gaps...)
-				merged.Covered = append(merged.Covered, p2.covered...)
+				merged.Gaps = append(merged.Gaps, cr.pass2.gaps...)
+				merged.Covered = append(merged.Covered, cr.pass2.covered...)
 			}
-		} else {
-			// All behaviors covered in pass 1, no gaps
 		}
-	}
 
-	for _, input := range inputs {
-		totalBehaviors += len(input.Behaviors)
+		totalBehaviors += len(inputs[i].Behaviors)
 	}
 
 	merged.Gaps = filterFalseUnspecified(merged.Gaps, ps)
 	merged.ComputeSummary(totalBehaviors)
 
-	// Aggregate usage across all passes
-	var totalUsage provider.TokenUsage
-	for _, sr := range pass1Results {
-		totalUsage.InputTokens += sr.usage.InputTokens
-		totalUsage.OutputTokens += sr.usage.OutputTokens
-		totalUsage.CostUSD += sr.usage.CostUSD
-		totalUsage.DurationMS += sr.usage.DurationMS
-	}
-	for _, sr := range pass2Results {
-		totalUsage.InputTokens += sr.usage.InputTokens
-		totalUsage.OutputTokens += sr.usage.OutputTokens
-		totalUsage.CostUSD += sr.usage.CostUSD
-		totalUsage.DurationMS += sr.usage.DurationMS
-	}
 	log.Info("tokens: %d in / %d out | cost: $%.4f",
 		totalUsage.InputTokens, totalUsage.OutputTokens, totalUsage.CostUSD)
 
@@ -219,60 +324,6 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	}
 
 	return merged, nil
-}
-
-func runParallel(ctx context.Context, p provider.Provider, inputs []SectionInput, results []sectionResult, maxConcurrency int, testOnly bool, prof *perf.Profile) {
-	sem := make(chan struct{}, maxConcurrency)
-	var wg sync.WaitGroup
-
-	for i, input := range inputs {
-		wg.Add(1)
-		go func(idx int, si SectionInput) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			sr := sectionResult{section: si.Section.Name}
-
-			pass := "pass 1"
-			if !testOnly {
-				pass = "pass 2"
-			}
-
-			var gaps []report.Gap
-			var covered []report.Covered
-			var usage provider.TokenUsage
-			var err error
-
-			var end func()
-			if prof != nil {
-				end = prof.Start(pass+":llm", si.Section.Name)
-			}
-
-			if testOnly {
-				gaps, covered, usage, err = runSectionPass1(ctx, p, &si)
-			} else {
-				gaps, covered, usage, err = runSectionPass2(ctx, p, &si)
-			}
-
-			if end != nil {
-				end()
-			}
-
-			if err != nil {
-				sr.err = fmt.Errorf("section %q: %w", si.Section.Name, err)
-				log.Info("%s: %q failed: %v", pass, si.Section.Name, err)
-			} else {
-				sr.gaps = gaps
-				sr.covered = covered
-				sr.usage = usage
-				log.Info("%s: %q done — %d gaps, %d covered", pass, si.Section.Name, len(gaps), len(covered))
-			}
-			results[idx] = sr
-		}(i, input)
-	}
-
-	wg.Wait()
 }
 
 // uncoveredBehaviors returns behaviors that have gaps but are NOT fully covered.
