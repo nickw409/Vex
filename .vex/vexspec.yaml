@@ -48,10 +48,10 @@ sections:
           WriteDefault creates a vex.yaml with default values. Returns
           error if file already exists (no overwrite).
 
-  - name: CLI
-    path: internal/cli
+  - name: CLI Root
+    file: [internal/cli/root.go, internal/cli/init.go, internal/cli/init_test.go, internal/cli/output.go, internal/cli/output_test.go]
     description: |
-      Cobra command definitions and command orchestration.
+      Root command setup, config loading, init command, and shared output.
     shared: [exit-codes, error-output, json-output]
     behaviors:
       - name: root-config-loading
@@ -62,159 +62,164 @@ sections:
       - name: root-config-flag
         description: |
           --config flag specifies explicit path to vex.yaml.
-    subsections:
-      - name: Init
-        file: internal/cli/init.go
-        behaviors:
-          - name: init-command
-            description: |
-              vex init creates default vex.yaml via config.WriteDefault.
-              Prints "Created vex.yaml" to stderr on success. Returns
-              error if file already exists.
+      - name: init-command
+        description: |
+          vex init creates default vex.yaml via config.WriteDefault.
+          Prints "Created vex.yaml" to stderr on success. Returns
+          error if file already exists.
+      - name: write-output
+        description: |
+          Creates .vex/ directory (0755) if missing. Writes data
+          to .vex/{filename} with trailing newline. Prints written
+          path to stderr. Returns error on directory creation or
+          write failure.
 
-      - name: Check
-        file: internal/cli/check.go
-        behaviors:
-          - name: check-spec-loading
-            description: |
-              Loads spec from --spec flag (default .vex/vexspec.yaml).
-              Returns error if spec file not found or invalid.
-          - name: check-section-filter
-            description: |
-              --section flag filters to a single named section.
-              Returns error if named section not found in spec.
-              Case-sensitive match.
-          - name: check-file-gathering
-            description: |
-              For each section, detects language and finds source/test
-              files from section paths. Warns on stderr if language
-              detection or file finding fails for a path but continues.
-              Warns if no files found for a section.
-          - name: check-execution
-            description: |
-              Calls check.RunProject with gathered files and provider.
-              On check error, prints to stderr but still outputs
-              whatever report was generated.
-          - name: check-profile-mode
-            description: |
-              When --profile flag is passed, creates a perf.Profile that
-              instruments all phases: spec loading, drift detection, file
-              discovery, file reading, and LLM calls. After check completes,
-              prints human-readable timing summary to stderr and writes
-              machine-readable JSON to .vex/profile.json.
-          - name: check-drift-mode
-            description: |
-              When --drift flag is passed, uses drift detection to
-              skip sections with no changes since the last check.
-              Only drifted sections are sent to the LLM. If no
-              previous check exists, checks all sections with a
-              warning. If all sections are clean, outputs empty
-              report. Sections where drift check fails are included
-              as a safety fallback.
-          - name: check-output
-            description: |
-              Writes JSON report to stdout and .vex/report.json.
-              Exit code 0 if no gaps, exit code 1 if gaps found.
+  - name: CLI Check
+    file: [internal/cli/check.go, internal/cli/check_test.go]
+    description: |
+      Check command: loads spec, gathers files, runs check engine.
+    shared: [exit-codes, error-output, json-output]
+    behaviors:
+      - name: check-spec-loading
+        description: |
+          Loads spec from --spec flag (default .vex/vexspec.yaml).
+          Returns error if spec file not found or invalid.
+      - name: check-section-filter
+        description: |
+          --section flag filters to a single named section.
+          Returns error if named section not found in spec.
+          Case-sensitive match.
+      - name: check-file-gathering
+        description: |
+          For each section, detects language and finds source/test
+          files from section paths. Warns on stderr if language
+          detection or file finding fails for a path but continues.
+          Warns if no files found for a section.
+      - name: check-execution
+        description: |
+          Calls check.RunProject with gathered files and provider.
+          On check error, prints to stderr but still outputs
+          whatever report was generated.
+      - name: check-profile-mode
+        description: |
+          When --profile flag is passed, creates a perf.Profile that
+          instruments all phases: spec loading, drift detection, file
+          discovery, file reading, and LLM calls. After check completes,
+          prints human-readable timing summary to stderr and writes
+          machine-readable JSON to .vex/profile.json.
+      - name: check-drift-mode
+        description: |
+          When --drift flag is passed, uses drift detection to
+          skip sections with no changes since the last check.
+          Only drifted sections are sent to the LLM. If no
+          previous check exists, checks all sections with a
+          warning. If all sections are clean, outputs empty
+          report. Sections where drift check fails are included
+          as a safety fallback.
+      - name: check-output
+        description: |
+          Writes JSON report to stdout and .vex/report.json.
+          Exit code 0 if no gaps, exit code 1 if gaps found.
 
-      - name: Validate
-        file: internal/cli/validate.go
-        behaviors:
-          - name: validate-spec-arg
-            description: |
-              Accepts optional positional arg for spec file path.
-              Defaults to .vex/vexspec.yaml if no arg provided.
-          - name: validate-execution
-            description: |
-              Sends the loaded spec to the LLM to check for missing
-              behaviors. Returns suggestions for gaps and flags
-              non-behavioral entries for removal.
-          - name: validate-output
-            description: |
-              Writes JSON validation result to stdout and
-              .vex/validation.json. Exit code 1 if not complete,
-              exit code 0 if complete.
+  - name: CLI Validate
+    file: [internal/cli/validate.go]
+    description: |
+      Validate command: checks spec completeness via LLM.
+    shared: [exit-codes, error-output, json-output]
+    behaviors:
+      - name: validate-spec-arg
+        description: |
+          Accepts optional positional arg for spec file path.
+          Defaults to .vex/vexspec.yaml if no arg provided.
+      - name: validate-execution
+        description: |
+          Sends the loaded spec to the LLM to check for missing
+          behaviors. Returns suggestions for gaps and flags
+          non-behavioral entries for removal.
+      - name: validate-output
+        description: |
+          Writes JSON validation result to stdout and
+          .vex/validation.json. Exit code 1 if not complete,
+          exit code 0 if complete.
 
-      - name: Spec
-        file: internal/cli/spec.go
-        behaviors:
-          - name: spec-generate-new
-            description: |
-              vex spec "description" generates new sections. Requires
-              exactly one positional argument; errors if no description
-              provided. If no existing spec, creates .vex/vexspec.yaml
-              with inferred project name (directory basename, fallback
-              "MyProject"). Prints created section names to stderr.
-          - name: spec-generate-append
-            description: |
-              If .vex/vexspec.yaml exists, appends generated sections
-              to existing spec without overwriting existing sections.
-          - name: spec-extend
-            description: |
-              --extend flag adds behaviors/subsections to an existing
-              named section. Returns error if section not found.
-              Case-sensitive match. Prints count of added behaviors
-              to stderr.
+  - name: CLI Spec
+    file: [internal/cli/spec.go, internal/cli/spec_test.go]
+    description: |
+      Spec command: generates and extends vexspec sections via LLM.
+    shared: [exit-codes, error-output]
+    behaviors:
+      - name: spec-generate-new
+        description: |
+          vex spec "description" generates new sections. Requires
+          exactly one positional argument; errors if no description
+          provided. If no existing spec, creates .vex/vexspec.yaml
+          with inferred project name (directory basename, fallback
+          "MyProject"). Prints created section names to stderr.
+      - name: spec-generate-append
+        description: |
+          If .vex/vexspec.yaml exists, appends generated sections
+          to existing spec without overwriting existing sections.
+      - name: spec-extend
+        description: |
+          --extend flag adds behaviors/subsections to an existing
+          named section. Returns error if section not found.
+          Case-sensitive match. Prints count of added behaviors
+          to stderr.
 
-      - name: Guide
-        file: internal/cli/guide.go
-        behaviors:
-          - name: guide-content
-            description: |
-              Prints agent-facing instructions for writing vexspecs.
-              Includes spec format examples, behavior description
-              guidelines, output file locations (.vex/report.json,
-              .vex/validation.json), example workflow, and command
-              reference.
-          - name: guide-formula-guidance
-            description: |
-              Guide includes a "Formulas and Equations" section that
-              instructs agents to include formulas directly in behavior
-              descriptions. Provides examples (GBM, Black-Scholes)
-              showing how to write formula-bearing behaviors with the
-              formula itself and expected test verification criteria.
-          - name: guide-section-sizing
-            description: |
-              Guide includes a "Section Sizing" section advising to keep
-              sections under 10 behaviors. Explains that large sections
-              produce bigger prompts and longer LLM times, and that more
-              smaller sections enables better parallelism.
-          - name: guide-workflow
-            description: |
-              Guide workflow is structured into three phases: first-time
-              spec authoring (spec, validate, fix loop), implementation
-              loop (check, fix gaps, repeat), and ongoing development
-              (validate regularly, then check or check --drift).
+  - name: CLI Guide
+    file: [internal/cli/guide.go, internal/cli/guide_test.go]
+    description: |
+      Guide command: prints agent-facing instructions.
+    behaviors:
+      - name: guide-content
+        description: |
+          Prints agent-facing instructions for writing vexspecs.
+          Includes spec format examples, behavior description
+          guidelines, output file locations (.vex/report.json,
+          .vex/validation.json), example workflow, and command
+          reference.
+      - name: guide-formula-guidance
+        description: |
+          Guide includes a "Formulas and Equations" section that
+          instructs agents to include formulas directly in behavior
+          descriptions. Provides examples (GBM, Black-Scholes)
+          showing how to write formula-bearing behaviors with the
+          formula itself and expected test verification criteria.
+      - name: guide-section-sizing
+        description: |
+          Guide includes a "Section Sizing" section advising to keep
+          sections under 10 behaviors. Explains that large sections
+          produce bigger prompts and longer LLM times, and that more
+          smaller sections enables better parallelism.
+      - name: guide-workflow
+        description: |
+          Guide workflow is structured into three phases: first-time
+          spec authoring (spec, validate, fix loop), implementation
+          loop (check, fix gaps, repeat), and ongoing development
+          (validate regularly, then check or check --drift).
 
-      - name: Update
-        file: internal/cli/update.go
-        behaviors:
-          - name: update-version-check
-            description: |
-              Fetches latest release tag from GitHub API. If current
-              version matches latest, logs "already up to date" and
-              returns without error.
-          - name: update-via-go
-            description: |
-              When the binary was installed via go install (no ldflags),
-              runs go install github.com/nickw409/vex/cmd/vex@{tag}
-              to update through the Go toolchain.
-          - name: update-via-binary
-            description: |
-              When the binary was built with ldflags (prebuilt release),
-              downloads the correct tarball for the current OS/arch from
-              GitHub Releases, extracts the vex binary from the tar.gz,
-              and atomically replaces the running binary via temp file
-              and rename.
-
-      - name: Output
-        file: internal/cli/output.go
-        behaviors:
-          - name: write-output
-            description: |
-              Creates .vex/ directory (0755) if missing. Writes data
-              to .vex/{filename} with trailing newline. Prints written
-              path to stderr. Returns error on directory creation or
-              write failure.
+  - name: CLI Update
+    file: [internal/cli/update.go, internal/cli/update_test.go]
+    description: |
+      Update command: self-update via GitHub releases or go install.
+    behaviors:
+      - name: update-version-check
+        description: |
+          Fetches latest release tag from GitHub API. If current
+          version matches latest, logs "already up to date" and
+          returns without error.
+      - name: update-via-go
+        description: |
+          When the binary was installed via go install (no ldflags),
+          runs go install github.com/nickw409/vex/cmd/vex@{tag}
+          to update through the Go toolchain.
+      - name: update-via-binary
+        description: |
+          When the binary was built with ldflags (prebuilt release),
+          downloads the correct tarball for the current OS/arch from
+          GitHub Releases, extracts the vex binary from the tar.gz,
+          and atomically replaces the running binary via temp file
+          and rename.
 
   - name: Spec Parsing
     path: internal/spec
