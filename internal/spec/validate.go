@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
+	"github.com/nickw409/vex/internal/log"
 	"github.com/nickw409/vex/internal/provider"
 )
 
@@ -60,55 +63,179 @@ Additionally, flag any existing behavior that is NOT actually a behavior:
 - Mathematical formulas and equations ARE valid behaviors — they define a correctness contract that tests must verify. Do NOT flag these as non-behavioral.
 When you find non-behavioral entries, include them in suggestions with relation: "remove: not a behavior — <reason>".`
 
-func ValidateProject(ctx context.Context, p provider.Provider, ps *ProjectSpec) (*ValidationResult, error) {
-	req := provider.CompletionRequest{
-		SystemPrompt: validateSystemPrompt,
-		UserPrompt:   buildProjectValidatePrompt(ps),
-	}
+const validateMaxRetries = 2
 
-	resp, err := p.Complete(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("validation request failed: %w", err)
-	}
-
-	return parseValidationResponse(resp.Content)
+type validateTask struct {
+	idx     int
+	sec     Section
+	retries int
 }
 
-func buildProjectValidatePrompt(ps *ProjectSpec) string {
+func ValidateProject(ctx context.Context, p provider.Provider, ps *ProjectSpec, maxConcurrency ...int) (*ValidationResult, error) {
+	maxConc := 5
+	if len(maxConcurrency) > 0 && maxConcurrency[0] > 0 {
+		maxConc = maxConcurrency[0]
+	}
+
+	if len(ps.Sections) == 1 {
+		maxConc = 1
+	}
+
+	type sectionResult struct {
+		suggestions []ValidationSuggestion
+		err         error
+	}
+
+	results := make([]sectionResult, len(ps.Sections))
+
+	var concurrency atomic.Int32
+	concurrency.Store(int32(maxConc))
+
+	work := make(chan validateTask, len(ps.Sections))
+	done := make(chan struct{})
+	sem := make(chan struct{}, maxConc)
+
+	// Seed work queue.
+	var pending atomic.Int32
+	pending.Store(int32(len(ps.Sections)))
+	for i, sec := range ps.Sections {
+		work <- validateTask{idx: i, sec: sec}
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	go func() {
+		for t := range work {
+			wg.Add(1)
+			go func(t validateTask) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				shared := ps.ResolveShared(&t.sec)
+				prompt := buildSectionValidatePrompt(ps.Project, ps.Description, &t.sec, shared)
+
+				log.Info("validating section %q", t.sec.Name)
+				req := provider.CompletionRequest{
+					SystemPrompt: validateSystemPrompt,
+					UserPrompt:   prompt,
+				}
+
+				resp, err := p.Complete(ctx, req)
+				if err != nil && provider.IsRetryable(err) && t.retries < validateMaxRetries {
+					// Adaptive backoff: reduce concurrency by 1 (floor 1).
+					for {
+						cur := concurrency.Load()
+						next := cur - 1
+						if next < 1 {
+							next = 1
+						}
+						if concurrency.CompareAndSwap(cur, next) {
+							if next < cur {
+								log.Info("validate: %q hit rate limit, reducing concurrency to %d", t.sec.Name, next)
+							}
+							break
+						}
+					}
+					t.retries++
+					log.Info("validate: %q retrying (attempt %d/%d)", t.sec.Name, t.retries, validateMaxRetries)
+					work <- t
+					return
+				}
+
+				if err != nil {
+					mu.Lock()
+					results[t.idx] = sectionResult{err: fmt.Errorf("section %q: %w", t.sec.Name, err)}
+					mu.Unlock()
+				} else {
+					parsed, parseErr := parseValidationResponse(resp.Content)
+					mu.Lock()
+					if parseErr != nil {
+						results[t.idx] = sectionResult{err: fmt.Errorf("section %q: %w", t.sec.Name, parseErr)}
+					} else {
+						results[t.idx] = sectionResult{suggestions: parsed.Suggestions}
+						log.Info("section %q done — %d suggestions", t.sec.Name, len(parsed.Suggestions))
+					}
+					mu.Unlock()
+
+					// Ramp up: on success, increase concurrency by 1 (capped at max).
+					for {
+						cur := concurrency.Load()
+						if cur >= int32(maxConc) {
+							break
+						}
+						if concurrency.CompareAndSwap(cur, cur+1) {
+							break
+						}
+					}
+				}
+
+				if pending.Add(-1) == 0 {
+					close(done)
+				}
+			}(t)
+		}
+	}()
+
+	<-done
+	close(work)
+	wg.Wait()
+
+	merged := &ValidationResult{
+		Complete:    true,
+		Suggestions: []ValidationSuggestion{},
+	}
+
+	var errs []string
+	for _, r := range results {
+		if r.err != nil {
+			errs = append(errs, r.err.Error())
+			continue
+		}
+		if len(r.suggestions) > 0 {
+			merged.Complete = false
+			merged.Suggestions = append(merged.Suggestions, r.suggestions...)
+		}
+	}
+
+	if len(errs) > 0 {
+		return merged, fmt.Errorf("errors in %d section(s): %s", len(errs), strings.Join(errs, "; "))
+	}
+
+	return merged, nil
+}
+
+func buildSectionValidatePrompt(project, description string, sec *Section, shared []Behavior) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Project: %s\n\n", ps.Project)
-	if ps.Description != "" {
-		fmt.Fprintf(&b, "## Description\n%s\n", ps.Description)
+	fmt.Fprintf(&b, "# Project: %s\n\n", project)
+	if description != "" {
+		fmt.Fprintf(&b, "## Description\n%s\n\n", description)
 	}
 
-	if len(ps.Shared) > 0 {
-		b.WriteString("## Shared Behaviors\n\n")
-		for _, beh := range ps.Shared {
-			fmt.Fprintf(&b, "### %s\n%s\n", beh.Name, beh.Description)
+	fmt.Fprintf(&b, "## Section: %s\n", sec.Name)
+	if sec.Description != "" {
+		fmt.Fprintf(&b, "%s\n", sec.Description)
+	}
+
+	if len(shared) > 0 {
+		b.WriteString("\n### Shared Behaviors\n\n")
+		for _, beh := range shared {
+			fmt.Fprintf(&b, "#### %s\n%s\n", beh.Name, beh.Description)
 		}
 	}
 
-	for _, sec := range ps.Sections {
-		fmt.Fprintf(&b, "## Section: %s\n", sec.Name)
-		if sec.Description != "" {
-			fmt.Fprintf(&b, "%s\n", sec.Description)
+	if len(sec.Behaviors) > 0 {
+		b.WriteString("\n### Behaviors\n\n")
+		for _, beh := range sec.Behaviors {
+			fmt.Fprintf(&b, "#### %s\n%s\n", beh.Name, beh.Description)
 		}
-		if len(sec.Shared) > 0 {
-			fmt.Fprintf(&b, "Uses shared: %s\n\n", strings.Join(sec.Shared, ", "))
-		}
+	}
 
-		if len(sec.Behaviors) > 0 {
-			b.WriteString("### Behaviors\n\n")
-			for _, beh := range sec.Behaviors {
-				fmt.Fprintf(&b, "#### %s\n%s\n", beh.Name, beh.Description)
-			}
-		}
-
-		for _, sub := range sec.Subsections {
-			fmt.Fprintf(&b, "### Subsection: %s\n\n", sub.Name)
-			for _, beh := range sub.Behaviors {
-				fmt.Fprintf(&b, "#### %s\n%s\n", beh.Name, beh.Description)
-			}
+	for _, sub := range sec.Subsections {
+		fmt.Fprintf(&b, "\n### Subsection: %s\n\n", sub.Name)
+		for _, beh := range sub.Behaviors {
+			fmt.Fprintf(&b, "#### %s\n%s\n", beh.Name, beh.Description)
 		}
 	}
 

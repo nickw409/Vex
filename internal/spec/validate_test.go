@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nickw409/vex/internal/provider"
@@ -21,34 +22,36 @@ func (m *mockProvider) Complete(ctx context.Context, req provider.CompletionRequ
 	return provider.CompletionResponse{Content: m.response}, nil
 }
 
-func TestBuildProjectValidatePrompt(t *testing.T) {
-	ps := &ProjectSpec{
-		Project:     "MyApp",
-		Description: "Test application",
-		Shared: []Behavior{
-			{Name: "error-handling", Description: "Structured errors"},
+type mockProviderFunc struct {
+	fn func(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error)
+}
+
+func (m *mockProviderFunc) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	return m.fn(ctx, req)
+}
+
+func TestBuildSectionValidatePrompt(t *testing.T) {
+	sec := Section{
+		Name:        "Auth",
+		Description: "Authentication module",
+		Shared:      []string{"error-handling"},
+		Behaviors: []Behavior{
+			{Name: "login", Description: "POST /login returns JWT"},
 		},
-		Sections: []Section{
+		Subsections: []Subsection{
 			{
-				Name:        "Auth",
-				Description: "Authentication module",
-				Shared:      []string{"error-handling"},
+				Name: "Token Refresh",
 				Behaviors: []Behavior{
-					{Name: "login", Description: "POST /login returns JWT"},
-				},
-				Subsections: []Subsection{
-					{
-						Name: "Token Refresh",
-						Behaviors: []Behavior{
-							{Name: "refresh", Description: "POST /refresh returns new token"},
-						},
-					},
+					{Name: "refresh", Description: "POST /refresh returns new token"},
 				},
 			},
 		},
 	}
+	shared := []Behavior{
+		{Name: "error-handling", Description: "Structured errors"},
+	}
 
-	prompt := buildProjectValidatePrompt(ps)
+	prompt := buildSectionValidatePrompt("MyApp", "Test application", &sec, shared)
 
 	for _, want := range []string{
 		"MyApp",
@@ -250,6 +253,69 @@ func TestValidateProjectProviderError(t *testing.T) {
 	if !strings.Contains(err.Error(), "provider unavailable") {
 		t.Errorf("expected error to contain 'provider unavailable', got %q", err.Error())
 	}
+}
+
+func TestValidateProjectConcurrentSections(t *testing.T) {
+	var mu sync.Mutex
+	var calls int
+	mock := &mockProviderFunc{
+		fn: func(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+
+			if strings.Contains(req.UserPrompt, "Storage") {
+				return provider.CompletionResponse{
+					Content: `{"complete": false, "suggestions": [{"section": "Storage", "behavior_name": "delete", "description": "Delete files", "relation": "new"}]}`,
+				}, nil
+			}
+			return provider.CompletionResponse{
+				Content: `{"complete": true, "suggestions": []}`,
+			}, nil
+		},
+	}
+
+	ps := &ProjectSpec{
+		Project: "MyApp",
+		Sections: []Section{
+			{
+				Name:        "Auth",
+				Description: "Auth module",
+				Behaviors:   []Behavior{{Name: "login", Description: "Login"}},
+			},
+			{
+				Name:        "Storage",
+				Description: "File storage",
+				Behaviors:   []Behavior{{Name: "upload", Description: "Upload files"}},
+			},
+			{
+				Name:        "API",
+				Description: "REST API",
+				Behaviors:   []Behavior{{Name: "list", Description: "List items"}},
+			},
+		},
+	}
+
+	result, err := ValidateProject(context.Background(), mock, ps, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Complete {
+		t.Error("expected complete=false (Storage has suggestions)")
+	}
+	if len(result.Suggestions) != 1 {
+		t.Fatalf("expected 1 suggestion, got %d", len(result.Suggestions))
+	}
+	if result.Suggestions[0].Section != "Storage" {
+		t.Errorf("expected suggestion for Storage, got %q", result.Suggestions[0].Section)
+	}
+
+	mu.Lock()
+	if calls != 3 {
+		t.Errorf("expected 3 LLM calls (one per section), got %d", calls)
+	}
+	mu.Unlock()
 }
 
 func TestValidateSystemPromptFormulaTolerance(t *testing.T) {

@@ -37,7 +37,7 @@ func newValidateCmd() *cobra.Command {
 			}
 
 			log.Info("validating spec")
-			result, err := spec.ValidateProject(cmd.Context(), p, ps)
+			result, err := spec.ValidateProject(cmd.Context(), p, ps, cfg.MaxConcurrency)
 			if err != nil {
 				return err
 			}
