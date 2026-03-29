@@ -13,8 +13,9 @@ import (
 )
 
 type ValidationResult struct {
-	Complete    bool                   `json:"complete"`
-	Suggestions []ValidationSuggestion `json:"suggestions"`
+	Complete         bool                   `json:"complete"`
+	Suggestions      []ValidationSuggestion `json:"suggestions"`
+	SectionChecksums map[string]string      `json:"section_checksums,omitempty"`
 }
 
 type ValidationSuggestion struct {

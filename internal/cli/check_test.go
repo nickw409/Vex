@@ -16,15 +16,18 @@ import (
 	"github.com/nickw409/vex/internal/diff"
 	"github.com/nickw409/vex/internal/provider"
 	"github.com/nickw409/vex/internal/report"
+	"github.com/nickw409/vex/internal/spec"
 )
 
 // cliMockProvider returns a fixed response for any LLM call.
 type cliMockProvider struct {
 	response string
 	err      error
+	calls    int
 }
 
 func (m *cliMockProvider) Complete(ctx context.Context, req provider.CompletionRequest) (provider.CompletionResponse, error) {
+	m.calls++
 	if m.err != nil {
 		return provider.CompletionResponse{}, m.err
 	}
@@ -824,6 +827,179 @@ func TestValidateSuccessOutputsJSON(t *testing.T) {
 	}
 	if !parsed.Complete {
 		t.Error("expected complete=true")
+	}
+}
+
+func TestValidateDriftSkipsCleanSections(t *testing.T) {
+	mock := &cliMockProvider{response: `{"complete": true, "suggestions": []}`}
+	orig := newProviderFunc
+	newProviderFunc = func(cfg *config.Config) (provider.Provider, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { newProviderFunc = orig })
+
+	dir := setupCheckEnv(t, testSpec)
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	// Write a previous validation.json with checksums matching the spec.
+	ps, _ := spec.LoadProject(filepath.Join(dir, ".vex", "vexspec.yaml"))
+	checksums := make(map[string]string)
+	for _, sec := range ps.Sections {
+		checksums[sec.Name] = spec.SectionChecksum(&sec, ps.ResolveShared(&sec))
+	}
+
+	prevValidation, _ := json.Marshal(map[string]interface{}{
+		"complete":          true,
+		"suggestions":       []interface{}{},
+		"section_checksums": checksums,
+	})
+	os.WriteFile(filepath.Join(dir, ".vex", "validation.json"), prevValidation, 0644)
+
+	// Discard stdout
+	origStdout := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"validate", filepath.Join(dir, ".vex", "vexspec.yaml")})
+	cmd.Execute()
+
+	w.Close()
+	os.Stdout = origStdout
+
+	if mock.calls != 0 {
+		t.Errorf("expected 0 LLM calls (all sections clean), got %d", mock.calls)
+	}
+}
+
+func TestValidateDriftRevalidatesChangedSections(t *testing.T) {
+	withMockProvider(t, `{"complete": true, "suggestions": []}`)
+
+	dir := setupCheckEnv(t, testSpec)
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	// Write a previous validation.json with stale checksums.
+	prevValidation, _ := json.Marshal(map[string]interface{}{
+		"complete":    true,
+		"suggestions": []interface{}{},
+		"section_checksums": map[string]string{
+			"Auth": "stale-checksum",
+		},
+	})
+	os.WriteFile(filepath.Join(dir, ".vex", "validation.json"), prevValidation, 0644)
+
+	// Capture stderr for log messages
+	origStderr := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
+	origStdout := os.Stdout
+	_, wOut, _ := os.Pipe()
+	os.Stdout = wOut
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"validate", filepath.Join(dir, ".vex", "vexspec.yaml")})
+	cmd.Execute()
+
+	wErr.Close()
+	wOut.Close()
+	os.Stderr = origStderr
+	os.Stdout = origStdout
+
+	var stderrBuf bytes.Buffer
+	stderrBuf.ReadFrom(rErr)
+
+	if !strings.Contains(stderrBuf.String(), "spec changed") {
+		t.Error("expected 'spec changed' log message for stale checksum")
+	}
+}
+
+func TestValidateDriftCarriesForwardSuggestions(t *testing.T) {
+	// validate calls os.Exit(1) when suggestions exist, so we test
+	// carry-forward in a subprocess.
+	if os.Getenv("VEX_TEST_CARRY_FORWARD") == "1" {
+		withMockProvider(t, `{"complete": true, "suggestions": []}`)
+
+		twoSectionSpec := `project: Test
+sections:
+  - name: Auth
+    path: src
+    description: Auth module
+    behaviors:
+      - name: login
+        description: POST /login returns JWT
+  - name: Storage
+    path: src
+    description: Storage module
+    behaviors:
+      - name: upload
+        description: Upload files
+`
+		dir := setupCheckEnv(t, twoSectionSpec)
+		origDir, _ := os.Getwd()
+		defer os.Chdir(origDir)
+		os.Chdir(dir)
+
+		ps, _ := spec.LoadProject(filepath.Join(dir, ".vex", "vexspec.yaml"))
+		authChecksum := spec.SectionChecksum(&ps.Sections[0], ps.ResolveShared(&ps.Sections[0]))
+
+		prevValidation, _ := json.Marshal(map[string]interface{}{
+			"complete": false,
+			"suggestions": []map[string]string{
+				{
+					"section":       "Auth",
+					"behavior_name": "logout",
+					"description":   "Missing logout behavior",
+					"relation":      "new",
+				},
+			},
+			"section_checksums": map[string]string{
+				"Auth":    authChecksum,
+				"Storage": "stale-checksum",
+			},
+		})
+		os.WriteFile(filepath.Join(dir, ".vex", "validation.json"), prevValidation, 0644)
+
+		origStdout := os.Stdout
+		_, w, _ := os.Pipe()
+		os.Stdout = w
+
+		cmd := NewRootCmd()
+		cmd.SetArgs([]string{"validate", filepath.Join(dir, ".vex", "vexspec.yaml")})
+		cmd.Execute()
+
+		w.Close()
+		os.Stdout = origStdout
+
+		// Read the written file (stdout may be lost due to os.Exit).
+		data, err := os.ReadFile(filepath.Join(dir, ".vex", "validation.json"))
+		if err != nil {
+			t.Fatalf("expected validation.json: %v", err)
+		}
+		if !strings.Contains(string(data), `"logout"`) {
+			t.Error("expected carried-forward suggestion for Auth/logout in validation.json")
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestValidateDriftCarriesForwardSuggestions", "-test.v")
+	cmd.Env = append(os.Environ(), "VEX_TEST_CARRY_FORWARD=1")
+	out, err := cmd.CombinedOutput()
+	// Exit code 1 is expected (suggestions found).
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Expected: os.Exit(1) from validate with suggestions.
+			// Check that the subprocess test assertions passed.
+			if strings.Contains(string(out), "FAIL") && !strings.Contains(string(out), "exit status 1") {
+				t.Fatalf("subprocess test failed:\n%s", out)
+			}
+			return
+		}
+		t.Fatalf("subprocess failed: %v\n%s", err, out)
 	}
 }
 

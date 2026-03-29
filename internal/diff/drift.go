@@ -122,3 +122,29 @@ func ReportChecksums(dir string) map[string]string {
 	}
 	return prev.SectionChecksums
 }
+
+// PreviousValidation holds fields from a previous validation.json
+// needed for drift detection and result carry-forward.
+type PreviousValidation struct {
+	SectionChecksums map[string]string `json:"section_checksums"`
+	Suggestions      []struct {
+		Section      string `json:"section"`
+		BehaviorName string `json:"behavior_name"`
+		Description  string `json:"description"`
+		Relation     string `json:"relation"`
+	} `json:"suggestions"`
+}
+
+// LoadPreviousValidation reads .vex/validation.json and returns its contents.
+// Returns nil if the file doesn't exist or is unreadable.
+func LoadPreviousValidation(dir string) *PreviousValidation {
+	data, err := os.ReadFile(filepath.Join(dir, ".vex", "validation.json"))
+	if err != nil {
+		return nil
+	}
+	var prev PreviousValidation
+	if err := json.Unmarshal(data, &prev); err != nil {
+		return nil
+	}
+	return &prev
+}
