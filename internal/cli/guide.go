@@ -273,7 +273,8 @@ evaluated together. Use separate sections when behaviors are independent.
 2. Run: vex spec "description"
 3. Edit .vex/vexspec.yaml if needed (add paths, adjust behaviors)
 4. Run: vex validate — read .vex/validation.json
-5. Address suggestions, repeat step 4 until complete: true
+5. Address suggestions or dismiss ones you intentionally skip
+6. Repeat step 4 until complete: true
 
 Do NOT manually validate the YAML structure — vex validate checks
 that all required fields are present, shared refs are valid, and
@@ -293,17 +294,18 @@ Always update the spec before writing code. The spec drives what gets
 tested — if the spec is stale, vex check won't catch missing coverage
 for new functionality.
 
-Drift detection is on by default: vex skips sections where neither the
-code files nor the spec content have changed since the last check. Use
-"vex check --drift=false" to force a full re-check of all sections.
+Drift detection is on by default for both check and validate: vex skips
+sections where neither code files nor spec content have changed since
+the last run. Use --drift=false to force a full re-check/revalidation.
 
 ### Ongoing development
 
 Use validate regularly as you evolve the spec:
 
-  vex validate        # ensure spec is complete
-  # fix any suggestions
-  vex validate        # confirm complete: true
+  vex validate              # drift-aware — only revalidates changed sections
+  # fix suggestions or dismiss intentional omissions
+  vex validate              # confirm complete: true
+  vex validate --drift=false  # force full revalidation
 
 Then check when tests are ready:
 
@@ -323,7 +325,8 @@ Add behaviors to an existing section:
   vex check --section "Name"         # check one section
   vex check --drift=false            # force full re-check
   vex report                         # formatted summary of last check
-  vex validate                       # validate spec completeness
+  vex validate                       # validate spec (drift-aware)
+  vex validate --drift=false         # force full revalidation
   vex spec "description"             # generate spec sections
   vex spec "desc" --extend "Name"    # add to existing section
   vex drift                          # show which sections changed
