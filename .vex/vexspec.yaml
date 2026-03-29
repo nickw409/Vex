@@ -263,9 +263,12 @@ sections:
         description: |
           Guide workflow is structured into three phases: first-time
           spec authoring (spec, validate, fix loop), implementation
-          loop (check, fix gaps, repeat), and ongoing development
-          (validate regularly, then check). Drift detection is on by
-          default. Notes --drift=false for forcing full re-checks.
+          loop (update spec first, validate, implement, check, fix
+          gaps, repeat), and ongoing development (validate regularly,
+          then check). Drift detection is on by default. Notes
+          --drift=false for forcing full re-checks. Instructs agents
+          to always update the spec before writing code so vex check
+          catches missing coverage for new functionality.
 
   - name: CLI Update
     file: [internal/cli/update.go, internal/cli/update_test.go]

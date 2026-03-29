@@ -73,12 +73,10 @@ Version is injected at build time via ldflags into `internal/version`. Never har
 **Cutting a release:**
 
 ```bash
-git tag v0.X.0
-git push origin v0.X.0
-make VERSION=v0.X.0 release
-# Upload dist/*.tar.gz to the GitHub release for the tag
-gh release create v0.X.0 dist/*.tar.gz --title "v0.X.0" --notes "Release notes"
+make publish VERSION=v1.5.0 NOTES="Release notes here"
 ```
+
+This single command runs tests, tags, pushes, builds cross-compiled binaries, creates the GitHub release with artifacts, and updates the Go module proxy. It fails fast if the working tree is dirty or tests fail.
 
 **What `make release` produces:** cross-compiled tarballs in `dist/` for linux/darwin amd64/arm64. Each contains a single `vex` binary.
 

@@ -216,16 +216,15 @@ After each LLM call, vex logs token usage and cost to stderr:
 [vex] tokens: 28878 in / 4645 out | cost: $0.2436 | time: 66.7s
 ```
 
-## Diff Mode
+## Drift Detection
 
-`vex check --diff`
+Drift detection is on by default (`vex check`). It skips sections where neither code files nor spec content have changed since the last check:
 
-- Runs `git diff HEAD` to get changed files
-- Filters to only source + test files matching language patterns
-- Scopes the check to only those files
-- Still checks ALL spec behaviors (the spec defines scope, diff just reduces file noise)
-
-Note: `git diff HEAD` includes unstaged files. Code is committed only after it passes vex.
+- Uses `git log --since` for committed changes and `git diff HEAD` for uncommitted changes
+- Per-section spec checksums (SHA-256) detect spec-only edits without file modifications
+- Skipped sections carry forward their gaps and covered entries from the previous report
+- `--drift=false` forces a full re-check of all sections
+- Old reports without checksums trigger a full re-check automatically
 
 ## Exit Codes
 
@@ -247,9 +246,10 @@ Note: `git diff HEAD` includes unstaged files. Code is committed only after it p
 2. **provider** — LLM provider abstraction + claude-cli implementation ✓
 3. **spec** — vexspec.yaml parsing + `vex validate` command ✓
 4. **check** — core gap detection engine, file discovery, JSON output, exit codes ✓
-5. **diff** — `--diff` mode, `vex guide` command ✓
-6. **unified-spec** — unified project spec format (.vex/vexspec.yaml with sections, subsections, shared behaviors)
-7. **spec-gen** — `vex spec "description"` command to generate vexspec from task description
+5. **drift** — drift detection (default on), `vex guide` command ✓
+6. **unified-spec** — unified project spec format (.vex/vexspec.yaml with sections, subsections, shared behaviors) ✓
+7. **spec-gen** — `vex spec "description"` command to generate vexspec from task description ✓
+8. **report** — `vex report` human-readable summary, covered overrides, carry-forward drift ✓
 
 ## Future Integration with Arc
 

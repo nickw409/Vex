@@ -15,7 +15,7 @@ Vex closes that gap. It takes a behavioral spec — a structured YAML document d
 ```
 cmd/vex/              Entry point
 internal/
-  cli/                Cobra command definitions (check, spec, validate, drift, lang, init, guide)
+  cli/                Cobra command definitions (check, report, spec, validate, drift, lang, init, guide)
   config/             vex.yaml parsing and validation
   provider/           LLM provider abstraction (currently claude-cli)
   spec/               vexspec.yaml parsing, validation, and generation
@@ -40,7 +40,7 @@ Sections are checked concurrently with bounded parallelism. Well-tested codebase
 
 ### Drift Detection
 
-`vex check --drift` uses git log and uncommitted change detection to skip sections with no code changes since the last check. Combined with two-pass, this means incremental checks on stable codebases are near-free.
+Drift detection is on by default. Vex uses git log and uncommitted change detection to skip sections with no code or spec changes since the last check. Per-section spec checksums detect edits to behavior descriptions even when no files changed. Skipped sections carry forward their gaps and covered entries from the previous report so unfixed gaps are not lost. Combined with two-pass, this means incremental checks on stable codebases are near-free.
 
 ### Multi-Language Detection
 
@@ -93,11 +93,11 @@ vex spec "Add JWT authentication with login, refresh, and token validation"
 # Validate the spec for completeness
 vex validate
 
-# Check test coverage against the spec
+# Check test coverage against the spec (drift detection on by default)
 vex check
 
-# After fixing gaps, use drift for incremental checks
-vex check --drift
+# View a formatted summary of the last check
+vex report
 ```
 
 ## Spec Format
@@ -120,6 +120,9 @@ sections:
     description: |
       JWT authentication module.
     shared: [error-handling]
+    covered:
+      - behavior: session-persistence
+        reason: tested via e2e binary spawn in tests/e2e/
     behaviors:
       - name: login
         description: |
@@ -140,9 +143,10 @@ All paths are absolute from the project root. Each behavior describes one observ
 
 | Command | Description |
 |---------|-------------|
-| `vex check` | Check test coverage against spec |
+| `vex check` | Check test coverage against spec (drift on by default) |
 | `vex check --section Name` | Check a single section |
-| `vex check --drift` | Only check sections changed since last check |
+| `vex check --drift=false` | Force full re-check of all sections |
+| `vex report` | Formatted summary of last check |
 | `vex validate` | Validate spec for missing behaviors |
 | `vex spec "description"` | Generate spec sections from task description |
 | `vex spec "desc" --extend Name` | Add behaviors to existing section |
@@ -200,10 +204,10 @@ languages:
 Cross-compiled binaries for linux/darwin (amd64/arm64) are published to GitHub Releases. Version, commit hash, and build date are injected at build time via ldflags.
 
 ```bash
-git tag v1.X.0 && git push origin v1.X.0
-make VERSION=v1.X.0 release
-gh release create v1.X.0 dist/*.tar.gz --title "v1.X.0"
+make publish VERSION=v1.5.0 NOTES="Release notes here"
 ```
+
+This runs tests, tags, pushes, builds binaries, creates the GitHub release, and updates the Go module proxy in one command.
 
 ## License
 

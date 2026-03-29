@@ -9,7 +9,7 @@ LDFLAGS = -s -w \
 
 DIST = dist
 
-.PHONY: build install clean test release
+.PHONY: build install clean test release publish
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o vex ./cmd/vex/
@@ -34,3 +34,28 @@ release: clean
 clean:
 	rm -f vex
 	rm -rf $(DIST)
+
+# Full release workflow: test, tag, build, publish, update Go proxy.
+# Usage: make publish VERSION=v1.5.0 NOTES="Release notes here"
+NOTES ?= Release $(VERSION)
+
+publish:
+	@if [ "$(VERSION)" = "" ] || echo "$(VERSION)" | grep -q "dev"; then \
+		echo "ERROR: set VERSION=vX.Y.Z"; exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "ERROR: working tree is dirty — commit first"; exit 1; \
+	fi
+	@echo "==> Running tests..."
+	go test ./...
+	@echo "==> Tagging $(VERSION)..."
+	git tag $(VERSION)
+	@echo "==> Pushing to origin..."
+	git push origin main $(VERSION)
+	@echo "==> Building release binaries..."
+	$(MAKE) VERSION=$(VERSION) release
+	@echo "==> Creating GitHub release..."
+	gh release create $(VERSION) $(DIST)/*.tar.gz --title "$(VERSION)" --notes "$(NOTES)"
+	@echo "==> Updating Go module proxy..."
+	GOPROXY=proxy.golang.org go list -m github.com/nickw409/vex@$(VERSION)
+	@echo "==> Done: $(VERSION) published"
