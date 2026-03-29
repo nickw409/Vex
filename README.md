@@ -147,7 +147,7 @@ All paths are absolute from the project root. Each behavior describes one observ
 | `vex check --section Name` | Check a single section |
 | `vex check --drift=false` | Force full re-check of all sections |
 | `vex report` | Formatted summary of last check |
-| `vex validate` | Validate spec for missing behaviors |
+| `vex validate` | Validate spec for missing behaviors (sections checked concurrently) |
 | `vex spec "description"` | Generate spec sections from task description |
 | `vex spec "desc" --extend Name` | Add behaviors to existing section |
 | `vex drift` | Show which sections have changed since last check |
@@ -176,14 +176,14 @@ Exit codes: 0 = clean, 1 = gaps/suggestions found, 2 = fatal error.
 ```yaml
 provider: claude-cli
 model: opus
-max_concurrency: 4
+max_concurrency: 5
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `provider` | `claude-cli` | LLM provider |
 | `model` | `opus` | Model name passed to provider |
-| `max_concurrency` | `4` | Max parallel LLM calls during check |
+| `max_concurrency` | `5` | Max parallel LLM calls during check and validate |
 | `languages` | auto-detect | Override language detection patterns |
 
 Add custom languages via CLI or config:

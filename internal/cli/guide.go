@@ -229,7 +229,8 @@ incomplete ones. "remove: not a behavior" flags non-behavioral entries.
 
 Keep sections under 10 behaviors. Sections are both the concurrency
 boundary and the drift boundary — each section runs as its own LLM
-call in parallel, and drift detection skips entire clean sections.
+call in parallel (for both check and validate), and drift detection
+skips entire clean sections.
 
 A large section with many subsections still runs as one LLM call and
 drifts as one unit. Splitting into separate sections gives you both
