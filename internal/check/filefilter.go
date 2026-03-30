@@ -8,10 +8,10 @@ import (
 	"github.com/nickw409/vex/internal/spec"
 )
 
-// fileFilterThreshold is the minimum number of files in a path before
-// filtering is attempted. Below this, the path is narrow enough that
-// sending everything is fine.
-const fileFilterThreshold = 10
+// fileFilterThreshold is the minimum number of files before filtering
+// is attempted. Set low because the fallback (return all files when no
+// keywords match) is the real safety net, not the threshold.
+const fileFilterThreshold = 4
 
 // FilterRelevantFiles reduces a file list to those relevant to the given
 // section when a broad path yields many files. Uses section name and
