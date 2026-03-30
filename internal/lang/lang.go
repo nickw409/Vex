@@ -14,6 +14,7 @@ type Language struct {
 	Name           string
 	TestPatterns   []string
 	SourcePatterns []string
+	TestDirs       []string // directory names whose files are always tests (e.g., "tests")
 }
 
 var builtinLanguages = map[string]Language{
@@ -36,6 +37,7 @@ var builtinLanguages = map[string]Language{
 		Name:           "python",
 		TestPatterns:   []string{"test_*.py", "*_test.py"},
 		SourcePatterns: []string{"*.py"},
+		TestDirs:       []string{"tests", "test"},
 	},
 	"java": {
 		Name:           "java",
@@ -46,6 +48,7 @@ var builtinLanguages = map[string]Language{
 		Name:           "rust",
 		TestPatterns:   []string{"*_test.rs"},
 		SourcePatterns: []string{"*.rs"},
+		TestDirs:       []string{"tests"},
 	},
 	"c": {
 		Name:           "c",
@@ -218,8 +221,10 @@ func FindFiles(dir string, lang *Language) (sourceFiles []string, testFiles []st
 
 		name := d.Name()
 
-		if isTest(name, lang.TestPatterns) {
-			testFiles = append(testFiles, path)
+		if isTest(name, lang.TestPatterns) || inTestDirSingle(path, lang) {
+			if matchesAny(name, lang.SourcePatterns) || matchesAny(name, lang.TestPatterns) {
+				testFiles = append(testFiles, path)
+			}
 			return nil
 		}
 
@@ -331,20 +336,31 @@ func DetectAndFind(dir string, overrides map[string]config.LanguageConfig) (lang
 	// Classify collected files using the detected languages.
 	for _, path := range allFiles {
 		name := filepath.Base(path)
-		isTest := false
+		classified := false
+
+		// Check filename-based test patterns first.
 		for _, l := range langs {
 			if matchesAny(name, l.TestPatterns) {
 				testFiles = append(testFiles, path)
-				isTest = true
+				classified = true
 				break
 			}
 		}
-		if !isTest {
-			for _, l := range langs {
-				if matchesAny(name, l.SourcePatterns) {
-					sourceFiles = append(sourceFiles, path)
-					break
-				}
+		if classified {
+			continue
+		}
+
+		// Check test directory convention.
+		if inTestDir(path, langs) {
+			testFiles = append(testFiles, path)
+			continue
+		}
+
+		// Source file.
+		for _, l := range langs {
+			if matchesAny(name, l.SourcePatterns) {
+				sourceFiles = append(sourceFiles, path)
+				break
 			}
 		}
 	}
@@ -376,6 +392,17 @@ func FindFilesMulti(dir string, langs []*Language) (sourceFiles []string, testFi
 			}
 		}
 
+		// Check test directory convention.
+		if inTestDir(path, langs) {
+			// File is in a test dir — classify as test if it matches any source pattern.
+			for _, l := range langs {
+				if matchesAny(name, l.SourcePatterns) {
+					testFiles = append(testFiles, path)
+					return nil
+				}
+			}
+		}
+
 		// Then check source patterns.
 		for _, l := range langs {
 			if matchesAny(name, l.SourcePatterns) {
@@ -390,12 +417,14 @@ func FindFilesMulti(dir string, langs []*Language) (sourceFiles []string, testFi
 	return
 }
 
-// IsTestFile reports whether the given filename matches the language's test patterns.
+// IsTestFile reports whether the given filename matches the language's test patterns
+// or is inside a test directory.
 func IsTestFile(filename string, lang *Language) bool {
-	return matchesAny(filepath.Base(filename), lang.TestPatterns)
+	return matchesAny(filepath.Base(filename), lang.TestPatterns) || inTestDirSingle(filename, lang)
 }
 
-// IsTestFileMulti reports whether the given filename matches any language's test patterns.
+// IsTestFileMulti reports whether the given filename matches any language's test patterns
+// or is inside a test directory.
 func IsTestFileMulti(filename string, langs []*Language) bool {
 	base := filepath.Base(filename)
 	for _, l := range langs {
@@ -403,7 +432,7 @@ func IsTestFileMulti(filename string, langs []*Language) bool {
 			return true
 		}
 	}
-	return false
+	return inTestDir(filename, langs)
 }
 
 func isTest(name string, patterns []string) bool {
@@ -415,6 +444,43 @@ func matchesAny(name string, patterns []string) bool {
 		if matched, _ := filepath.Match(p, name); matched {
 			return true
 		}
+	}
+	return false
+}
+
+// inTestDir reports whether the given file path is inside a test directory
+// for any of the provided languages.
+func inTestDir(path string, langs []*Language) bool {
+	// Walk up the path components looking for a test directory name.
+	dir := filepath.Dir(path)
+	for dir != "." && dir != "/" {
+		base := filepath.Base(dir)
+		for _, l := range langs {
+			for _, td := range l.TestDirs {
+				if base == td {
+					return true
+				}
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return false
+}
+
+// inTestDirSingle is like inTestDir but for a single language.
+func inTestDirSingle(path string, lang *Language) bool {
+	if len(lang.TestDirs) == 0 {
+		return false
+	}
+	dir := filepath.Dir(path)
+	for dir != "." && dir != "/" {
+		base := filepath.Base(dir)
+		for _, td := range lang.TestDirs {
+			if base == td {
+				return true
+			}
+		}
+		dir = filepath.Dir(dir)
 	}
 	return false
 }

@@ -1,10 +1,14 @@
 project: Vex Benchmark
 description: |
-  Fixed 3-section subset for profiling vex check performance.
-  Targets: Diff (small/fast), Provider (medium, subsections), CLI Report (triggers pass 2).
-  Expected: ~5 LLM calls total.
+  Fixed subset for profiling vex check performance.
+  Group A: 3 vex sections with narrow Go paths (no filtering).
+  Group B: 3 CUDA kernel sections sharing one broad Rust+CUDA path (filtering triggers).
+  Group C: 2 engine sections sharing one broad Rust path (filtering triggers).
+  Expected: ~10-14 LLM calls, ~$0.80-1.50 per run.
 
 sections:
+  # --- Group A: narrow paths (vex's own code) ---
+
   - name: Diff
     path: internal/diff
     description: |
@@ -76,3 +80,114 @@ sections:
         description: |
           Returns error with "run vex check first" hint when
           .vex/report.json does not exist.
+
+  # --- Group B: shared broad path (Fracture CUDA backend) ---
+
+  - name: RMSNorm Kernel
+    path: bench/testdata/cuda-backend
+    description: |
+      CUDA RMSNorm kernel. Root Mean Square Layer Normalization
+      applied before attention and FFN sublayers in the transformer.
+    shared: [numerical-correctness]
+    behaviors:
+      - name: rmsnorm-forward
+        description: |
+          Computes RMSNorm: output = (x / sqrt(mean(x^2) + eps)) * weight.
+          Input x is [N, 4096], weight is [4096], eps is 1e-5.
+          Sum-of-squares accumulation uses FP32 to prevent precision loss.
+          Output is FP16. Must match PyTorch reference.
+      - name: rmsnorm-numerical-stability
+        description: |
+          Handles edge cases: all-zero input (produces all-zero output),
+          very large input values (no overflow in FP32 accumulator),
+          very small input values (eps prevents division by zero).
+
+  - name: Attention Kernel
+    path: bench/testdata/cuda-backend
+    description: |
+      CUDA attention kernel. Scaled dot-product attention with causal
+      masking and grouped-query attention (GQA).
+    shared: [numerical-correctness]
+    behaviors:
+      - name: attention-prefill
+        description: |
+          Computes causal self-attention during prefill. Q is [N, 32, 128],
+          K and V are [N, 8, 128]. Applies causal mask so position i only
+          attends to positions 0..i. Each group of 4 Q heads shares 1 KV
+          head. Softmax computed in FP32.
+      - name: attention-decode
+        description: |
+          Computes attention during decode. Q is [1, 32, 128], K_cache and
+          V_cache are [seq_len, 8, 128]. GQA head expansion applies.
+      - name: attention-causal-mask-correctness
+        description: |
+          Position i must have zero attention weight on positions j > i
+          during prefill. Verified via carefully constructed inputs.
+
+  - name: RoPE Kernel
+    path: bench/testdata/cuda-backend
+    description: |
+      CUDA Rotary Positional Embeddings kernel applied to Q and K tensors
+      after projection, before attention.
+    shared: [numerical-correctness]
+    behaviors:
+      - name: rope-precomputation
+        description: |
+          Pre-computes inverse frequency table: freq[i] = theta^(-2i/d_head)
+          for i in 0..head_dim/2, where d_head=128 and theta=500000. Table
+          stored on GPU, reused across all layers and forward passes.
+      - name: rope-apply
+        description: |
+          Applies rotary embedding to Q [N, 32, 128] and K [N, 8, 128].
+          Uses split-half convention matching PyTorch/HuggingFace. Must
+          handle non-contiguous positions during decode.
+
+  # --- Group C: shared broad path (Fracture engine crate) ---
+
+  - name: KV Cache Manager
+    path: bench/testdata/engine
+    description: |
+      Manages GPU memory for key/value cache across all layers and sequences.
+      Pre-allocates buffers for max_seq_len tokens. Tracks per-layer seq_len
+      for cache append and retrieval.
+    behaviors:
+      - name: cache-allocation
+        description: |
+          Allocates KV cache for a new sequence. Pre-allocates buffers for
+          max_seq_len tokens across num_layers layers. Returns opaque CacheHandle.
+      - name: cache-append
+        description: |
+          Appends K and V tensors to the cache at the correct offset for each
+          layer. Handles both prefill (multiple positions) and decode (single
+          position). Tracks current sequence length.
+      - name: cache-retrieval
+        description: |
+          Returns the full pre-allocated K and V cache tensors for a given
+          layer. Shape is [max_seq_len, num_kv_heads, head_dim].
+
+  - name: Pipeline Coordinator
+    path: bench/testdata/engine
+    description: |
+      Orchestrates a pipeline of ComputeNodes, chaining activation tensors
+      from head through middle nodes to tail to produce logits from token IDs.
+    behaviors:
+      - name: pipeline-validation
+        description: |
+          Validates pipeline configuration: at least one node, first node is
+          head, last node is tail, layer ranges are contiguous with no gaps
+          or overlaps between adjacent nodes.
+      - name: pipeline-forward
+        description: |
+          Chains forward passes through all nodes. Carries positions array
+          through unchanged. Converts activations between nodes. Returns
+          error if intermediate node produces logits or final produces activations.
+      - name: pipeline-split-equivalence
+        description: |
+          A split pipeline produces numerically identical logits to monolithic
+          execution. Tested with symmetric and asymmetric splits.
+
+shared:
+  - name: numerical-correctness
+    description: |
+      All tensor-producing operations must match PyTorch reference outputs
+      within FP16 tolerance (rtol=1e-3, atol=1e-3).

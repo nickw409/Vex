@@ -615,6 +615,105 @@ func TestDetectAndFindSkipsDirs(t *testing.T) {
 	}
 }
 
+func TestRustTestDirConvention(t *testing.T) {
+	dir := t.TempDir()
+	// Source files in src/
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	touch(t, srcDir, "lib.rs")
+	touch(t, srcDir, "rmsnorm.rs")
+
+	// Test files in tests/ (Rust integration test convention)
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0755)
+	touch(t, testsDir, "kernels.rs")
+	touch(t, testsDir, "reference.rs")
+
+	langs, src, tests, err := DetectAndFind(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) != 1 || langs[0].Name != "rust" {
+		t.Errorf("expected [rust], got %v", langs)
+	}
+	if len(src) != 2 {
+		t.Errorf("expected 2 source files (lib.rs, rmsnorm.rs), got %d: %v", len(src), src)
+	}
+	if len(tests) != 2 {
+		t.Errorf("expected 2 test files (kernels.rs, reference.rs), got %d: %v", len(tests), tests)
+	}
+}
+
+func TestRustTestDirWithFindFilesMulti(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	touch(t, srcDir, "lib.rs")
+
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0755)
+	touch(t, testsDir, "integration.rs")
+
+	langs := []*Language{
+		{Name: "rust", TestPatterns: []string{"*_test.rs"}, SourcePatterns: []string{"*.rs"}, TestDirs: []string{"tests"}},
+	}
+
+	src, tests, err := FindFilesMulti(dir, langs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 1 {
+		t.Errorf("expected 1 source file, got %d: %v", len(src), src)
+	}
+	if len(tests) != 1 {
+		t.Errorf("expected 1 test file, got %d: %v", len(tests), tests)
+	}
+}
+
+func TestIsTestFileRustTestDir(t *testing.T) {
+	rustLang := &Language{
+		Name:           "rust",
+		TestPatterns:   []string{"*_test.rs"},
+		SourcePatterns: []string{"*.rs"},
+		TestDirs:       []string{"tests"},
+	}
+
+	if !IsTestFile("project/tests/kernels.rs", rustLang) {
+		t.Error("expected tests/kernels.rs to be a test file")
+	}
+	if IsTestFile("project/src/lib.rs", rustLang) {
+		t.Error("expected src/lib.rs to not be a test file")
+	}
+	if !IsTestFile("project/tests/nested/deep.rs", rustLang) {
+		t.Error("expected tests/nested/deep.rs to be a test file")
+	}
+}
+
+func TestPythonTestDirConvention(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "app.py")
+
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0755)
+	touch(t, testsDir, "conftest.py")
+	touch(t, testsDir, "test_auth.py")
+
+	langs, src, tests, err := DetectAndFind(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) != 1 || langs[0].Name != "python" {
+		t.Errorf("expected [python], got %v", langs)
+	}
+	if len(src) != 1 {
+		t.Errorf("expected 1 source file, got %d: %v", len(src), src)
+	}
+	// Both files in tests/ should be classified as test files
+	if len(tests) != 2 {
+		t.Errorf("expected 2 test files, got %d: %v", len(tests), tests)
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {
