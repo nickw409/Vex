@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/nickw409/vex/internal/check"
 	"github.com/nickw409/vex/internal/diff"
@@ -19,6 +20,10 @@ import (
 // newProviderFunc is the factory used to create LLM providers.
 // Tests override this to inject mocks.
 var newProviderFunc = provider.New
+
+// newProviderWithModelFunc creates a provider with a specific model override.
+// Tests override this to inject mocks.
+var newProviderWithModelFunc = provider.NewWithModel
 
 func newCheckCmd() *cobra.Command {
 	var specPath string
@@ -47,9 +52,21 @@ func newCheckCmd() *cobra.Command {
 				log.Info("warning: section %q exceeds %d behaviors — consider splitting", name, spec.MaxSectionBehaviors)
 			}
 
-			p, err := newProviderFunc(cfg)
+			pass2Provider, err := newProviderFunc(cfg)
 			if err != nil {
 				return err
+			}
+
+			// Use a cheaper model for pass 1 (triage) to reduce cost.
+			var pass1Provider provider.Provider
+			if cfg.Pass1Model != cfg.Model {
+				pass1Provider, err = newProviderWithModelFunc(cfg, cfg.Pass1Model)
+				if err != nil {
+					return err
+				}
+				log.Info("using %s for pass 1, %s for pass 2", cfg.Pass1Model, cfg.Model)
+			} else {
+				pass1Provider = pass2Provider
 			}
 
 			sections := ps.Sections
@@ -127,8 +144,15 @@ func newCheckCmd() *cobra.Command {
 				endDrift()
 			}
 
-			endInputs := profStart(prof, "inputs:total", "")
-			var inputs []check.SectionInput
+			// Pre-filter sections: extract covered overrides and skip empty ones.
+			// This is cheap (no I/O) so we do it up front to know totalSections.
+			type sectionWork struct {
+				sec       *spec.Section
+				behaviors []spec.Behavior
+				paths     []string
+				files     []string
+			}
+			var workItems []sectionWork
 			var coveredOverrides []report.Covered
 			for i := range sections {
 				sec := &sections[i]
@@ -167,93 +191,123 @@ func newCheckCmd() *cobra.Command {
 					continue
 				}
 
-				srcMap := make(map[string]string)
-				testMap := make(map[string]string)
-
-				// path: entries — walk directories for all source and test files
-				for _, dir := range paths {
-					endDetect := profStart(prof, "inputs:detect", sec.Name)
-					langs, err := lang.DetectAll(dir, cfg.Languages)
-					endDetect()
-					if err != nil {
-						log.Info("warning: skipping path %s: %v", dir, err)
-						continue
-					}
-
-					endFind := profStart(prof, "inputs:find_files", sec.Name)
-					sourceFiles, testFiles, err := lang.FindFilesMulti(dir, langs)
-					endFind()
-					if err != nil {
-						log.Info("warning: skipping path %s: %v", dir, err)
-						continue
-					}
-
-					endRead := profStart(prof, "inputs:read_source", sec.Name)
-					for _, f := range sourceFiles {
-						data, err := os.ReadFile(f)
-						if err != nil {
-							endRead()
-							return fmt.Errorf("reading %s: %w", f, err)
-						}
-						srcMap[f] = string(data)
-					}
-					endRead()
-
-					endReadTest := profStart(prof, "inputs:read_tests", sec.Name)
-					for _, f := range testFiles {
-						data, err := os.ReadFile(f)
-						if err != nil {
-							endReadTest()
-							return fmt.Errorf("reading %s: %w", f, err)
-						}
-						testMap[f] = string(data)
-					}
-					endReadTest()
-				}
-
-				// file: entries — classify as source or test, then read
-				if len(files) > 0 {
-					endFiles := profStart(prof, "inputs:read_explicit", sec.Name)
-					// Detect language from the first file's directory
-					langs, langErr := lang.DetectAll(filepath.Dir(files[0]), cfg.Languages)
-
-					for _, f := range files {
-						data, err := os.ReadFile(f)
-						if err != nil {
-							endFiles()
-							return fmt.Errorf("reading %s: %w", f, err)
-						}
-						if langErr == nil && lang.IsTestFileMulti(f, langs) {
-							testMap[f] = string(data)
-						} else {
-							srcMap[f] = string(data)
-						}
-					}
-					endFiles()
-				}
-
-				if len(testMap) == 0 && len(srcMap) == 0 {
-					log.Info("warning: no files found for section %q", sec.Name)
-					continue
-				}
-
-				inputs = append(inputs, check.SectionInput{
-					Section:     sec,
-					Behaviors:   behaviors,
-					SourceFiles: srcMap,
-					TestFiles:   testMap,
+				workItems = append(workItems, sectionWork{
+					sec:       sec,
+					behaviors: behaviors,
+					paths:     paths,
+					files:     files,
 				})
 			}
-			endInputs()
 
-			if len(inputs) == 0 {
+			if len(workItems) == 0 {
 				return emptyReport(ps)
 			}
 
-			log.Info("checking %d section(s)", len(inputs))
+			log.Info("checking %d section(s)", len(workItems))
+
+			// Build inputs concurrently and stream them into the check engine.
+			// LLM calls start as soon as the first section's files are read.
+			inputCh := make(chan check.SectionInput, len(workItems))
+			var inputWg sync.WaitGroup
+			var inputErr error
+			var inputErrOnce sync.Once
+
+			// Use a semaphore to limit concurrent file I/O.
+			ioSem := make(chan struct{}, cfg.MaxConcurrency)
+
+			endInputs := profStart(prof, "inputs:total", "")
+			for _, w := range workItems {
+				inputWg.Add(1)
+				go func(w sectionWork) {
+					defer inputWg.Done()
+
+					ioSem <- struct{}{}
+					defer func() { <-ioSem }()
+
+					srcMap := make(map[string]string)
+					testMap := make(map[string]string)
+
+					// path: entries — detect languages and find files in a single walk
+					for _, dir := range w.paths {
+						endDetect := profStart(prof, "inputs:detect_and_find", w.sec.Name)
+						_, sourceFiles, testFiles, err := lang.DetectAndFind(dir, cfg.Languages)
+						endDetect()
+						if err != nil {
+							log.Info("warning: skipping path %s: %v", dir, err)
+							continue
+						}
+
+						endRead := profStart(prof, "inputs:read_files", w.sec.Name)
+						for _, f := range sourceFiles {
+							data, err := os.ReadFile(f)
+							if err != nil {
+								endRead()
+								inputErrOnce.Do(func() { inputErr = fmt.Errorf("reading %s: %w", f, err) })
+								return
+							}
+							srcMap[f] = string(data)
+						}
+						for _, f := range testFiles {
+							data, err := os.ReadFile(f)
+							if err != nil {
+								endRead()
+								inputErrOnce.Do(func() { inputErr = fmt.Errorf("reading %s: %w", f, err) })
+								return
+							}
+							testMap[f] = string(data)
+						}
+						endRead()
+					}
+
+					// file: entries — classify as source or test, then read
+					if len(w.files) > 0 {
+						endFiles := profStart(prof, "inputs:read_explicit", w.sec.Name)
+						langs, langErr := lang.DetectAll(filepath.Dir(w.files[0]), cfg.Languages)
+
+						for _, f := range w.files {
+							data, err := os.ReadFile(f)
+							if err != nil {
+								endFiles()
+								inputErrOnce.Do(func() { inputErr = fmt.Errorf("reading %s: %w", f, err) })
+								return
+							}
+							if langErr == nil && lang.IsTestFileMulti(f, langs) {
+								testMap[f] = string(data)
+							} else {
+								srcMap[f] = string(data)
+							}
+						}
+						endFiles()
+					}
+
+					if len(testMap) == 0 && len(srcMap) == 0 {
+						log.Info("warning: no files found for section %q", w.sec.Name)
+						return
+					}
+
+					inputCh <- check.SectionInput{
+						Section:     w.sec,
+						Behaviors:   w.behaviors,
+						SourceFiles: srcMap,
+						TestFiles:   testMap,
+					}
+				}(w)
+			}
+
+			// Close the channel once all input goroutines finish.
+			go func() {
+				inputWg.Wait()
+				endInputs()
+				close(inputCh)
+			}()
+
 			endCheck := profStart(prof, "check:total", "")
-			r, err := check.RunProject(cmd.Context(), p, ps, inputs, cfg.MaxConcurrency, prof)
+			r, err := check.RunProjectStreaming(cmd.Context(), pass1Provider, pass2Provider, ps, inputCh, len(workItems), cfg.MaxConcurrency, prof)
 			endCheck()
+
+			if inputErr != nil {
+				return inputErr
+			}
 			if err != nil {
 				log.Info("check done with errors: %v", err)
 			}

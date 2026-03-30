@@ -45,9 +45,15 @@ type Provider interface {
 }
 
 func New(cfg *config.Config) (Provider, error) {
+	return NewWithModel(cfg, cfg.Model)
+}
+
+// NewWithModel creates a provider using the given model override instead of
+// the config's default model. Used to create a cheaper provider for pass 1.
+func NewWithModel(cfg *config.Config, model string) (Provider, error) {
 	switch cfg.Provider {
 	case "claude-cli":
-		return &ClaudeCLI{Model: cfg.Model}, nil
+		return &ClaudeCLI{Model: model}, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", cfg.Provider)
 	}

@@ -233,6 +233,125 @@ func FindFiles(dir string, lang *Language) (sourceFiles []string, testFiles []st
 	return
 }
 
+// DetectAndFind performs language detection and file discovery in a single
+// directory walk, avoiding the cost of two separate traversals. It returns
+// the detected languages (sorted by file count, most first) along with
+// classified source and test file lists.
+func DetectAndFind(dir string, overrides map[string]config.LanguageConfig) (langs []*Language, sourceFiles []string, testFiles []string, err error) {
+	// Build the full set of known languages: builtins + overrides.
+	all := make(map[string]Language, len(builtinLanguages)+len(overrides))
+	for k, v := range builtinLanguages {
+		all[k] = v
+	}
+	for name, lc := range overrides {
+		all[name] = Language{
+			Name:           name,
+			TestPatterns:   lc.TestPatterns,
+			SourcePatterns: lc.SourcePatterns,
+		}
+	}
+
+	// Build extension-to-language map from source patterns.
+	extMap := make(map[string]string)
+	for name, l := range builtinLanguages {
+		for _, p := range l.SourcePatterns {
+			ext := filepath.Ext(p)
+			if ext != "" {
+				extMap[strings.ToLower(ext)] = name
+			}
+		}
+	}
+	for name, lc := range overrides {
+		for _, p := range lc.SourcePatterns {
+			ext := filepath.Ext(p)
+			if ext != "" {
+				extMap[strings.ToLower(ext)] = name
+			}
+		}
+	}
+
+	hasPackageJSON := false
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+		hasPackageJSON = true
+	}
+
+	// First pass: count files per language to determine which languages are present.
+	counts := make(map[string]int)
+	// Collect all file paths for classification in the second phase.
+	var allFiles []string
+
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			base := d.Name()
+			if base == "node_modules" || base == "vendor" || base == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if langName, ok := extMap[ext]; ok {
+			if langName == "javascript" && !hasPackageJSON {
+				return nil
+			}
+			counts[langName]++
+			allFiles = append(allFiles, path)
+		}
+		return nil
+	})
+
+	if len(counts) == 0 {
+		return nil, nil, nil, fmt.Errorf("no supported language detected in %s", dir)
+	}
+
+	// Sort languages by file count (most first).
+	type langCount struct {
+		name  string
+		count int
+	}
+	var sorted []langCount
+	for name, count := range counts {
+		sorted = append(sorted, langCount{name, count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].name < sorted[j].name
+	})
+
+	for _, lc := range sorted {
+		l := all[lc.name]
+		langs = append(langs, &l)
+	}
+
+	// Classify collected files using the detected languages.
+	for _, path := range allFiles {
+		name := filepath.Base(path)
+		isTest := false
+		for _, l := range langs {
+			if matchesAny(name, l.TestPatterns) {
+				testFiles = append(testFiles, path)
+				isTest = true
+				break
+			}
+		}
+		if !isTest {
+			for _, l := range langs {
+				if matchesAny(name, l.SourcePatterns) {
+					sourceFiles = append(sourceFiles, path)
+					break
+				}
+			}
+		}
+	}
+
+	return langs, sourceFiles, testFiles, nil
+}
+
 // FindFilesMulti discovers source and test files for multiple languages in a single walk.
 func FindFilesMulti(dir string, langs []*Language) (sourceFiles []string, testFiles []string, err error) {
 	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {

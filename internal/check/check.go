@@ -26,9 +26,10 @@ type SectionInput struct {
 
 const pass1SystemPrompt = `You are a test coverage auditor. You will receive:
 1. A component specification with named behaviors describing intended functionality
-2. Test files testing the component
+2. Test file signatures — function names, subtest declarations, and assertion lines (not full test bodies)
 
-Your job: determine whether the tests adequately cover each behavior described in the specification based on the test code alone.
+Your job: determine whether the tests adequately cover each behavior described in the specification based on the test signatures and assertions.
+This is a triage pass. If uncertain whether a behavior is covered, flag it as a gap — a second pass with full source code will confirm.
 
 Respond with ONLY a JSON object in this exact format:
 {
@@ -122,36 +123,75 @@ type task struct {
 // complete, rather than waiting for all of pass 1 to finish.
 // If prof is non-nil, timing spans are recorded for each phase.
 func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int, prof *perf.Profile) (*report.Report, error) {
+	return RunProjectWithProviders(ctx, p, p, ps, inputs, maxConcurrency, prof)
+}
+
+// RunProjectWithProviders is like RunProject but uses separate providers for
+// pass 1 (triage) and pass 2 (confirmation). This allows using a cheaper model
+// for the initial test-only analysis.
+func RunProjectWithProviders(ctx context.Context, pass1Provider, pass2Provider provider.Provider, ps *spec.ProjectSpec, inputs []SectionInput, maxConcurrency int, prof *perf.Profile) (*report.Report, error) {
+	ch := make(chan SectionInput, len(inputs))
+	for _, inp := range inputs {
+		ch <- inp
+	}
+	close(ch)
+	return RunProjectStreaming(ctx, pass1Provider, pass2Provider, ps, ch, len(inputs), maxConcurrency, prof)
+}
+
+// RunProjectStreaming checks sections as they arrive on the input channel,
+// enabling pipelined execution where file I/O and LLM calls overlap.
+// totalSections is the expected number of inputs (for pre-allocating result slots).
+// If prof is non-nil, timing spans are recorded for each phase.
+func RunProjectStreaming(ctx context.Context, pass1Provider, pass2Provider provider.Provider, ps *spec.ProjectSpec, inputCh <-chan SectionInput, totalSections int, maxConcurrency int, prof *perf.Profile) (*report.Report, error) {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 5
 	}
 
-	log.Info("pass 1: analyzing %d section(s)", len(inputs))
+	log.Info("pass 1: analyzing %d section(s)", totalSections)
 
 	// Collect results per input index. Each slot holds pass 1 and optionally pass 2.
 	type combinedResult struct {
 		pass1 sectionResult
 		pass2 *sectionResult // nil if pass 2 not needed or not yet complete
 	}
-	results := make([]combinedResult, len(inputs))
+	results := make([]combinedResult, totalSections)
+	// Store original inputs as they arrive (needed for pass 2 enqueue).
+	origInputs := make([]SectionInput, totalSections)
 
 	// Adaptive concurrency: current limit can shrink on retryable errors.
 	var concurrency atomic.Int32
 	concurrency.Store(int32(maxConcurrency))
 
-	// Work queue and completion channel.
-	work := make(chan task, len(inputs)*2) // enough for pass 1 + pass 2
+	// Work queue and completion tracking.
+	work := make(chan task, totalSections*2) // enough for pass 1 + pass 2
 	done := make(chan struct{})
-
-	// Seed pass 1 tasks.
-	pending := len(inputs)
-	for i, inp := range inputs {
-		work <- task{inputIdx: i, input: inp, testOnly: true}
-	}
 
 	var mu sync.Mutex
 	var totalUsage provider.TokenUsage
 	var errs []string
+	pending := 0
+	feedingDone := false
+	receivedCount := 0
+
+	// Feed inputs from channel into work queue as they arrive.
+	go func() {
+		idx := 0
+		for inp := range inputCh {
+			mu.Lock()
+			origInputs[idx] = inp
+			pending++
+			mu.Unlock()
+			work <- task{inputIdx: idx, input: inp, testOnly: true}
+			idx++
+		}
+		mu.Lock()
+		receivedCount = idx
+		feedingDone = true
+		if pending == 0 {
+			close(done)
+		}
+		mu.Unlock()
+	}()
 
 	// Worker loop: pull tasks from queue, respect adaptive semaphore.
 	sem := make(chan struct{}, maxConcurrency) // buffered to max ceiling
@@ -185,9 +225,9 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 				}
 
 				if t.testOnly {
-					gaps, covered, usage, err = runSectionPass1(ctx, p, &t.input)
+					gaps, covered, usage, err = runSectionPass1(ctx, pass1Provider, &t.input)
 				} else {
-					gaps, covered, usage, err = runSectionPass2(ctx, p, &t.input)
+					gaps, covered, usage, err = runSectionPass2(ctx, pass2Provider, &t.input)
 				}
 
 				if end != nil {
@@ -250,17 +290,18 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 
 					// Pipeline: if pass 1 succeeded and has uncovered behaviors, enqueue pass 2.
 					if sr.err == nil {
-						uncovered := uncoveredBehaviors(sr.gaps, sr.covered, inputs[t.inputIdx].Behaviors)
+						orig := origInputs[t.inputIdx]
+						uncovered := uncoveredBehaviors(sr.gaps, sr.covered, orig.Behaviors)
 						if len(uncovered) > 0 {
 							pending++
 							log.Info("pass 2: enqueuing %q (%d uncovered)", t.input.Section.Name, len(uncovered))
 							work <- task{
 								inputIdx: t.inputIdx,
 								input: SectionInput{
-									Section:     inputs[t.inputIdx].Section,
+									Section:     orig.Section,
 									Behaviors:   uncovered,
-									SourceFiles: inputs[t.inputIdx].SourceFiles,
-									TestFiles:   inputs[t.inputIdx].TestFiles,
+									SourceFiles: orig.SourceFiles,
+									TestFiles:   orig.TestFiles,
 								},
 								testOnly: false,
 							}
@@ -271,7 +312,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 				}
 
 				pending--
-				if pending == 0 {
+				if pending == 0 && feedingDone {
 					close(done)
 				}
 				mu.Unlock()
@@ -291,7 +332,8 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 	}
 
 	totalBehaviors := 0
-	for i, cr := range results {
+	for i := 0; i < receivedCount; i++ {
+		cr := results[i]
 		if cr.pass1.err != nil {
 			errs = append(errs, cr.pass1.err.Error())
 			continue
@@ -310,7 +352,7 @@ func RunProject(ctx context.Context, p provider.Provider, ps *spec.ProjectSpec, 
 			}
 		}
 
-		totalBehaviors += len(inputs[i].Behaviors)
+		totalBehaviors += len(origInputs[i].Behaviors)
 	}
 
 	merged.Gaps = filterFalseUnspecified(merged.Gaps, ps)
@@ -401,9 +443,10 @@ func buildPass1Prompt(input *SectionInput) (string, error) {
 		fmt.Fprintf(&b, "#### %s\n%s\n\n", beh.Name, beh.Description)
 	}
 
-	b.WriteString("## Test Files\n\n")
+	b.WriteString("## Test Files (signatures and assertions)\n\n")
 	for name, content := range input.TestFiles {
-		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", name, content)
+		sig := extractTestSignatures(name, content)
+		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", name, sig)
 	}
 
 	result := b.String()

@@ -9,7 +9,7 @@ LDFLAGS = -s -w \
 
 DIST = dist
 
-.PHONY: build install clean test release publish
+.PHONY: build install clean test release publish bench bench-diff bench-save
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o vex ./cmd/vex/
@@ -30,6 +30,16 @@ release: clean
 		tar -czf $(DIST)/$${name}.tar.gz -C $(DIST) vex; \
 		rm $(DIST)/vex; \
 	done
+
+bench: build
+	bench/run.sh
+
+bench-diff: build
+	bench/run.sh --diff
+
+bench-save:
+	cp bench/profile.json bench/baseline.json
+	@echo "Baseline saved."
 
 clean:
 	rm -f vex

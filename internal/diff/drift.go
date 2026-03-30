@@ -20,45 +20,45 @@ type DriftResult struct {
 func Drift(dir string, paths []string, since time.Time) (*DriftResult, error) {
 	sinceStr := since.Format(time.RFC3339)
 
+	absPaths := make([]string, len(paths))
+	for i, p := range paths {
+		absPaths[i] = filepath.Join(dir, p)
+	}
+
 	var allChanged []string
-	for _, p := range paths {
-		absPath := filepath.Join(dir, p)
 
-		// Committed changes since last check
-		cmd := exec.Command("git", "log", "--since="+sinceStr, "--name-only", "--pretty=format:", "--", absPath)
-		cmd.Dir = dir
+	// Committed changes since last check — single git log for all paths.
+	args := append([]string{"log", "--since=" + sinceStr, "--name-only", "--pretty=format:", "--"}, absPaths...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
 
-		out, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("running git log for %s: %w", p, err)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("running git log: %w", err)
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			allChanged = append(allChanged, line)
 		}
+	}
 
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				allChanged = append(allChanged, line)
-			}
-		}
+	// Uncommitted changes (staged + unstaged) — single git diff for all paths.
+	args = append([]string{"diff", "HEAD", "--name-only", "--"}, absPaths...)
+	cmd = exec.Command("git", args...)
+	cmd.Dir = dir
 
-		// Uncommitted changes (staged + unstaged)
-		cmd = exec.Command("git", "diff", "HEAD", "--name-only", "--", absPath)
-		cmd.Dir = dir
-
-		out, err = cmd.Output()
-		if err != nil {
-			// HEAD may not exist in empty repos, ignore
-			continue
-		}
-
-		lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
+	out, err = cmd.Output()
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				allChanged = append(allChanged, line)
 			}
 		}
 	}
+	// HEAD may not exist in empty repos, ignore error
 
 	if len(allChanged) == 0 {
 		return nil, nil

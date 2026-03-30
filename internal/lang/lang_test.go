@@ -538,6 +538,83 @@ func TestFindFilesMultiDedup(t *testing.T) {
 	}
 }
 
+func TestDetectAndFind(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.go")
+	touch(t, dir, "handler.go")
+	touch(t, dir, "main_test.go")
+	touch(t, dir, "README.md")
+
+	langs, src, tests, err := DetectAndFind(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) != 1 || langs[0].Name != "go" {
+		t.Errorf("expected [go], got %v", langs)
+	}
+	if len(src) != 2 {
+		t.Errorf("expected 2 source files, got %d", len(src))
+	}
+	if len(tests) != 1 {
+		t.Errorf("expected 1 test file, got %d", len(tests))
+	}
+}
+
+func TestDetectAndFindMultiLang(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.rs")
+	touch(t, dir, "lib.rs")
+	touch(t, dir, "lib_test.rs")
+	touch(t, dir, "kernel.cu")
+	touch(t, dir, "test_kernel.cu")
+
+	langs, src, tests, err := DetectAndFind(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(langs) != 2 {
+		t.Fatalf("expected 2 languages, got %d", len(langs))
+	}
+	// 2 source: main.rs, kernel.cu (lib.rs is source too but lib_test.rs is test)
+	// Actually: main.rs, lib.rs (not test), kernel.cu = wait, .cuh files too
+	// main.rs (src), lib.rs (src), kernel.cu (src) = 3 src; lib_test.rs (test), test_kernel.cu (test) = 2 test
+	if len(src) != 3 {
+		t.Errorf("expected 3 source files, got %d", len(src))
+	}
+	if len(tests) != 2 {
+		t.Errorf("expected 2 test files, got %d", len(tests))
+	}
+}
+
+func TestDetectAndFindEmpty(t *testing.T) {
+	dir := t.TempDir()
+	_, _, _, err := DetectAndFind(dir, nil)
+	if err == nil {
+		t.Error("expected error for empty directory")
+	}
+}
+
+func TestDetectAndFindSkipsDirs(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "main.go")
+
+	for _, skip := range []string{"node_modules", "vendor", ".git"} {
+		os.MkdirAll(filepath.Join(dir, skip), 0755)
+		touch(t, filepath.Join(dir, skip), "extra.go")
+	}
+
+	_, src, tests, err := DetectAndFind(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 1 {
+		t.Errorf("expected 1 source file (skipped dirs), got %d", len(src))
+	}
+	if len(tests) != 0 {
+		t.Errorf("expected 0 test files, got %d", len(tests))
+	}
+}
+
 func touch(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(""), 0644); err != nil {

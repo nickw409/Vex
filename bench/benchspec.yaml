@@ -1,0 +1,78 @@
+project: Vex Benchmark
+description: |
+  Fixed 3-section subset for profiling vex check performance.
+  Targets: Diff (small/fast), Provider (medium, subsections), CLI Report (triggers pass 2).
+  Expected: ~5 LLM calls total.
+
+sections:
+  - name: Diff
+    path: internal/diff
+    description: |
+      Git diff integration for scoping checks to changed files.
+    behaviors:
+      - name: diff-changed-files
+        description: |
+          Runs git diff HEAD --name-only in directory. Returns
+          absolute paths. Returns nil if no changes. Returns
+          error if directory is not inside a git repository.
+      - name: diff-filter-by-language
+        description: |
+          Separates file list into source and test files by matching
+          against language glob patterns. Accepts multiple languages
+          and checks patterns across all of them.
+
+  - name: Provider
+    path: internal/provider
+    description: |
+      LLM provider abstraction and implementations.
+    subsections:
+      - name: Factory
+        file: internal/provider/provider.go
+        behaviors:
+          - name: provider-factory
+            description: |
+              New() creates provider from config. Currently only
+              supports "claude-cli". Returns error on unknown provider.
+          - name: provider-retryable-errors
+            description: |
+              IsRetryable classifies errors as transient (rate limit or
+              overload) vs permanent. Matches on "rate_limit", "rate limit",
+              "overloaded", "429", and "529" in the error message. Returns
+              false for nil errors and permanent failures.
+      - name: Claude CLI
+        file: internal/provider/claude_cli.go
+        behaviors:
+          - name: claude-cli-execution
+            description: |
+              Invokes claude CLI with --print, --output-format json,
+              --model, and --system-prompt flags. Passes user prompt
+              via stdin.
+          - name: claude-cli-not-found
+            description: |
+              Returns specific error message with install URL when
+              claude binary is not in PATH (exec.ErrNotFound).
+          - name: claude-cli-exit-error
+            description: |
+              When claude CLI exits non-zero, returns error containing
+              the stderr output from the process.
+
+  - name: CLI Report
+    file: [internal/cli/report.go, internal/cli/report_test.go]
+    description: |
+      Report command: displays formatted summary of last check.
+    behaviors:
+      - name: report-display
+        description: |
+          Reads .vex/report.json and prints a human-readable summary
+          to stdout. Shows total behaviors, covered count, and gap
+          count on the first line. Groups gaps by behavior name with
+          counts, truncates details longer than 120 characters, and
+          replaces newlines in details with spaces.
+      - name: report-corrupt-file
+        description: |
+          Returns error when .vex/report.json exists but contains
+          invalid or unparseable JSON.
+      - name: report-missing-file
+        description: |
+          Returns error with "run vex check first" hint when
+          .vex/report.json does not exist.

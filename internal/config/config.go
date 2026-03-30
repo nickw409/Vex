@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Provider       string                    `yaml:"provider"`
 	Model          string                    `yaml:"model"`
+	Pass1Model     string                    `yaml:"pass1_model,omitempty"`
 	MaxConcurrency int                       `yaml:"max_concurrency,omitempty"`
 	APIKeyEnv      string                    `yaml:"api_key_env,omitempty"`
 	Languages      map[string]LanguageConfig `yaml:"languages,omitempty"`
@@ -53,6 +54,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "opus"
+	}
+	if cfg.Pass1Model == "" {
+		cfg.Pass1Model = cfg.Model
 	}
 	if cfg.MaxConcurrency <= 0 {
 		cfg.MaxConcurrency = 5

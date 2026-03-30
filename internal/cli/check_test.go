@@ -65,23 +65,33 @@ sections:
         description: POST /login returns JWT
 `
 
-// withMockProvider overrides newProviderFunc for the duration of the test.
+// withMockProvider overrides newProviderFunc and newProviderWithModelFunc for the duration of the test.
 func withMockProvider(t *testing.T, response string) {
 	t.Helper()
+	mock := &cliMockProvider{response: response}
 	orig := newProviderFunc
+	origModel := newProviderWithModelFunc
 	newProviderFunc = func(cfg *config.Config) (provider.Provider, error) {
-		return &cliMockProvider{response: response}, nil
+		return mock, nil
 	}
-	t.Cleanup(func() { newProviderFunc = orig })
+	newProviderWithModelFunc = func(cfg *config.Config, model string) (provider.Provider, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { newProviderFunc = orig; newProviderWithModelFunc = origModel })
 }
 
 func withFailingProvider(t *testing.T, err error) {
 	t.Helper()
+	mock := &cliMockProvider{err: err}
 	orig := newProviderFunc
+	origModel := newProviderWithModelFunc
 	newProviderFunc = func(cfg *config.Config) (provider.Provider, error) {
-		return &cliMockProvider{err: err}, nil
+		return mock, nil
 	}
-	t.Cleanup(func() { newProviderFunc = orig })
+	newProviderWithModelFunc = func(cfg *config.Config, model string) (provider.Provider, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { newProviderFunc = orig; newProviderWithModelFunc = origModel })
 }
 
 func TestCheckSpecNotFound(t *testing.T) {
