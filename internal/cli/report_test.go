@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -85,6 +86,55 @@ func TestPrintReportTruncatesLongDetails(t *testing.T) {
 	}
 }
 
+func TestPrintReportReplacesNewlines(t *testing.T) {
+	r := &report.Report{
+		Summary: report.Summary{TotalBehaviors: 1, FullyCovered: 0, GapsFound: 1},
+		Gaps: []report.Gap{
+			{Behavior: "test", Detail: "line one\nline two\nline three", Suggestion: "fix"},
+		},
+	}
+
+	cmd := &cobra.Command{}
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	printReport(cmd, r)
+	output := buf.String()
+
+	if strings.Contains(output, "\nline two") {
+		t.Error("expected newlines in detail to be replaced with spaces")
+	}
+	if !strings.Contains(output, "line one line two line three") {
+		t.Errorf("expected newlines replaced with spaces, got: %s", output)
+	}
+}
+
+func TestPrintReportAlphabeticalOrder(t *testing.T) {
+	r := &report.Report{
+		Summary: report.Summary{TotalBehaviors: 3, FullyCovered: 0, GapsFound: 3},
+		Gaps: []report.Gap{
+			{Behavior: "zebra", Detail: "z gap", Suggestion: "fix"},
+			{Behavior: "alpha", Detail: "a gap", Suggestion: "fix"},
+			{Behavior: "middle", Detail: "m gap", Suggestion: "fix"},
+		},
+	}
+
+	cmd := &cobra.Command{}
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	printReport(cmd, r)
+	output := buf.String()
+
+	alphaIdx := strings.Index(output, "alpha")
+	middleIdx := strings.Index(output, "middle")
+	zebraIdx := strings.Index(output, "zebra")
+
+	if alphaIdx > middleIdx || middleIdx > zebraIdx {
+		t.Errorf("expected alphabetical order (alpha < middle < zebra), got: %s", output)
+	}
+}
+
 func TestReportCommandNoFile(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{"report"})
@@ -92,5 +142,30 @@ func TestReportCommandNoFile(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Error("expected error when no report.json exists")
+	}
+	if err != nil && !strings.Contains(err.Error(), "run vex check first") {
+		t.Errorf("expected 'run vex check first' hint in error, got: %s", err.Error())
+	}
+}
+
+func TestReportCommandCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	vexPath := dir + "/.vex"
+	os.MkdirAll(vexPath, 0755)
+	os.WriteFile(vexPath+"/report.json", []byte("not valid json{{{"), 0644)
+
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"report"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error for corrupt report.json")
+	}
+	if err != nil && !strings.Contains(err.Error(), "parsing report") {
+		t.Errorf("expected 'parsing report' in error, got: %s", err.Error())
 	}
 }

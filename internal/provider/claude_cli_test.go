@@ -160,27 +160,25 @@ func TestCompleteExitError(t *testing.T) {
 		UserPrompt:   "user",
 	}
 
-	// Use a script that exits non-zero with stderr output
-	cmd := c.buildCmd(context.Background(), req)
-	cmd.Path = "/bin/sh"
-	cmd.Args = []string{"sh", "-c", "echo 'some error' >&2; exit 1"}
-	cmd.Stdin = strings.NewReader(req.UserPrompt)
+	// Point PATH at a temp dir with a fake "claude" script that exits non-zero
+	// with known stderr output. This exercises the ExitError branch directly.
+	tmpDir := t.TempDir()
+	script := tmpDir + "/claude"
+	os.WriteFile(script, []byte("#!/bin/sh\necho 'rate_limit_error: too many requests' >&2\nexit 1\n"), 0755)
 
-	_, err := cmd.Output()
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir)
+	defer os.Setenv("PATH", origPath)
+
+	_, err := c.Complete(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error for non-zero exit")
 	}
-
-	// Verify we can exercise the Complete error path for ExitError
-	// by checking that the actual Complete method wraps stderr
-	_, completeErr := c.Complete(context.Background(), req)
-	if completeErr == nil {
-		// claude binary might actually exist; skip if so
-		t.Skip("claude binary found on PATH, cannot test exit error path")
+	if !strings.Contains(err.Error(), "claude cli failed") {
+		t.Errorf("expected 'claude cli failed' in error, got %q", err.Error())
 	}
-	// If we got here, the error should be from one of the error branches
-	if completeErr.Error() == "" {
-		t.Error("expected non-empty error message")
+	if !strings.Contains(err.Error(), "rate_limit_error") {
+		t.Errorf("expected stderr content in error, got %q", err.Error())
 	}
 }
 
