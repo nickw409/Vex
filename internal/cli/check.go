@@ -237,6 +237,16 @@ func newCheckCmd() *cobra.Command {
 							continue
 						}
 
+						// Filter to files relevant to this section when the path is broad.
+						beforeSrc := len(sourceFiles)
+						beforeTest := len(testFiles)
+						sourceFiles = check.FilterRelevantFiles(w.sec, w.behaviors, sourceFiles)
+						testFiles = check.FilterRelevantFiles(w.sec, w.behaviors, testFiles)
+						if len(sourceFiles) < beforeSrc || len(testFiles) < beforeTest {
+							log.Info("section %q: filtered %d/%d source, %d/%d test files",
+								w.sec.Name, len(sourceFiles), beforeSrc, len(testFiles), beforeTest)
+						}
+
 						endRead := profStart(prof, "inputs:read_files", w.sec.Name)
 						for _, f := range sourceFiles {
 							data, err := os.ReadFile(f)
